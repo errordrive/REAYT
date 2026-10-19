@@ -7,5 +7,21 @@ data class Track(
     val album: String = "",
     val durationMs: Long = 0L,
     val coverUrl: String? = null,
-    val streamUrl: String? = null
-)
+    val streamUrl: String? = null,
+    val audioFormat: String = "LOSSLESS • FLAC",
+    val lyricsLrc: String = "",
+    val isLiked: Boolean = false
+) {
+    fun toSongsModel(): SongsModel = SongsModel(
+        id = id.hashCode(),
+        title = title,
+        singer = artist,
+        album = album,
+        durationMs = durationMs,
+        coverUri = coverUrl ?: "",
+        url = streamUrl ?: "",
+        audioFormat = audioFormat,
+        lyricsLrc = lyricsLrc,
+        isLiked = isLiked
+    )
+}

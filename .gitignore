@@ -26,3 +26,8 @@ local.properties
 *.secret
 *.keystore
 *.jks
+
+# Scratch and outputs
+build_output/
+.agents/
+decrypt_strings.py

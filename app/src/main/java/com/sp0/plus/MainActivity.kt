@@ -5,97 +5,237 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.media3.common.MediaItem
-import androidx.media3.common.Player
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
-import com.sp0.plus.model.Track
+import com.sp0.plus.player.PlaybackManager
+import com.sp0.plus.ui.components.FullPlayerSheet
+import com.sp0.plus.ui.components.MiniPlayer
+import com.sp0.plus.ui.components.QueueSheet
 import com.sp0.plus.ui.notification.PlaybackService
-import com.sp0.plus.ui.screens.PlayerScreen
+import com.sp0.plus.ui.screens.HomeScreen
+import com.sp0.plus.ui.screens.LibraryScreen
+import com.sp0.plus.ui.screens.SearchScreen
 import com.sp0.plus.ui.theme.Sp0PlusTheme
 
 class MainActivity : ComponentActivity() {
 
     private var controllerFuture: ListenableFuture<MediaController>? = null
-    private var mediaController: MediaController? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Connect to MediaSessionService
+        initializeMediaController()
+
         setContent {
             Sp0PlusTheme {
-                var isPlaying by remember { mutableStateOf(false) }
-                var currentTrack by remember {
-                    mutableStateOf<Track?>(
-                        Track(
-                            id = "demo_1",
-                            title = "Sample Audio Track",
-                            artist = "Sp0+ Player",
-                            durationMs = 210000L
-                        )
-                    )
-                }
-                var progressMs by remember { mutableStateOf(0L) }
-
-                PlayerScreen(
-                    currentTrack = currentTrack,
-                    isPlaying = isPlaying,
-                    progressMs = progressMs,
-                    durationMs = currentTrack?.durationMs ?: 0L,
-                    onPlayPauseToggle = {
-                        mediaController?.let { controller ->
-                            if (controller.isPlaying) {
-                                controller.pause()
-                                isPlaying = false
-                            } else {
-                                controller.play()
-                                isPlaying = true
-                            }
-                        } ?: run {
-                            isPlaying = !isPlaying
-                        }
-                    },
-                    onSkipNext = {
-                        mediaController?.seekToNextMediaItem()
-                    },
-                    onSkipPrevious = {
-                        mediaController?.seekToPreviousMediaItem()
-                    },
-                    onSeek = { fraction ->
-                        val duration = currentTrack?.durationMs ?: 0L
-                        val targetMs = (fraction * duration).toLong()
-                        progressMs = targetMs
-                        mediaController?.seekTo(targetMs)
-                    }
-                )
+                MainAppShell()
             }
         }
-
-        initializeMediaController()
     }
 
     private fun initializeMediaController() {
         val sessionToken = SessionToken(this, ComponentName(this, PlaybackService::class.java))
-        controllerFuture = MediaController.Builder(this, sessionToken).buildAsync()
-        controllerFuture?.addListener({
+        val future = MediaController.Builder(this, sessionToken).buildAsync()
+        this.controllerFuture = future
+
+        future.addListener({
             try {
-                mediaController = controllerFuture?.get()
-                mediaController?.addListener(object : Player.Listener {
-                    override fun onIsPlayingChanged(isPlaying: Boolean) {
-                        // handled reactively
-                    }
-                })
-            } catch (e: Exception) {
-                e.printStackTrace()
+                val controller = future.get()
+                PlaybackManager.attachMediaController(controller)
+            } catch (_: Exception) {
             }
         }, MoreExecutors.directExecutor())
     }
 
     override fun onDestroy() {
-        super.onDestroy()
         controllerFuture?.let { MediaController.releaseFuture(it) }
+        super.onDestroy()
+    }
+}
+
+enum class NavigationTab {
+    HOME, SEARCH, LIBRARY
+}
+
+@Composable
+fun MainAppShell() {
+    var selectedTab by remember { mutableStateOf(NavigationTab.HOME) }
+    var isPlayerExpanded by remember { mutableStateOf(false) }
+    var isQueueOpen by remember { mutableStateOf(false) }
+
+    val currentTrack by PlaybackManager.currentTrack.collectAsState()
+    val isPlaying by PlaybackManager.isPlaying.collectAsState()
+    val positionMs by PlaybackManager.positionMs.collectAsState()
+    val durationMs by PlaybackManager.durationMs.collectAsState()
+    val queue by PlaybackManager.queue.collectAsState()
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF121212))
+    ) {
+        // Main Screen Content based on selected tab
+        Column(modifier = Modifier.fillMaxSize()) {
+            Box(modifier = Modifier.weight(1f)) {
+                when (selectedTab) {
+                    NavigationTab.HOME -> HomeScreen()
+                    NavigationTab.SEARCH -> SearchScreen()
+                    NavigationTab.LIBRARY -> LibraryScreen()
+                }
+            }
+
+            // Bottom Navigation Area
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF121212))
+            ) {
+                // Persistent MiniPlayer
+                currentTrack?.let { track ->
+                    MiniPlayer(
+                        track = track,
+                        isPlaying = isPlaying,
+                        progressMs = positionMs,
+                        durationMs = durationMs,
+                        onExpand = { isPlayerExpanded = true }
+                    )
+                }
+
+                // Bottom Navigation Bar
+                NavigationBar(
+                    containerColor = Color(0xFF121212),
+                    tonalElevation = 8.dp,
+                    modifier = Modifier.height(64.dp)
+                ) {
+                    // Home Tab
+                    NavigationBarItem(
+                        selected = selectedTab == NavigationTab.HOME,
+                        onClick = { selectedTab = NavigationTab.HOME },
+                        icon = {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_home_filled),
+                                contentDescription = "Home",
+                                modifier = Modifier.size(24.dp)
+                            )
+                        },
+                        label = {
+                            Text(
+                                text = "Home",
+                                fontSize = 10.sp,
+                                fontWeight = if (selectedTab == NavigationTab.HOME) FontWeight.Bold else FontWeight.Normal
+                            )
+                        },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Color.White,
+                            selectedTextColor = Color.White,
+                            unselectedIconColor = Color(0xFFB3B3B3),
+                            unselectedTextColor = Color(0xFFB3B3B3),
+                            indicatorColor = Color.Transparent
+                        )
+                    )
+
+                    // Search Tab
+                    NavigationBarItem(
+                        selected = selectedTab == NavigationTab.SEARCH,
+                        onClick = { selectedTab = NavigationTab.SEARCH },
+                        icon = {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_search_big),
+                                contentDescription = "Search",
+                                modifier = Modifier.size(24.dp)
+                            )
+                        },
+                        label = {
+                            Text(
+                                text = "Search",
+                                fontSize = 10.sp,
+                                fontWeight = if (selectedTab == NavigationTab.SEARCH) FontWeight.Bold else FontWeight.Normal
+                            )
+                        },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Color.White,
+                            selectedTextColor = Color.White,
+                            unselectedIconColor = Color(0xFFB3B3B3),
+                            unselectedTextColor = Color(0xFFB3B3B3),
+                            indicatorColor = Color.Transparent
+                        )
+                    )
+
+                    // Library Tab
+                    NavigationBarItem(
+                        selected = selectedTab == NavigationTab.LIBRARY,
+                        onClick = { selectedTab = NavigationTab.LIBRARY },
+                        icon = {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_library_big),
+                                contentDescription = "Your Library",
+                                modifier = Modifier.size(24.dp)
+                            )
+                        },
+                        label = {
+                            Text(
+                                text = "Your Library",
+                                fontSize = 10.sp,
+                                fontWeight = if (selectedTab == NavigationTab.LIBRARY) FontWeight.Bold else FontWeight.Normal
+                            )
+                        },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Color.White,
+                            selectedTextColor = Color.White,
+                            unselectedIconColor = Color(0xFFB3B3B3),
+                            unselectedTextColor = Color(0xFFB3B3B3),
+                            indicatorColor = Color.Transparent
+                        )
+                    )
+                }
+            }
+        }
+
+        // Full Screen Player Sheet Overlay
+        AnimatedVisibility(
+            visible = isPlayerExpanded && currentTrack != null,
+            enter = slideInVertically(initialOffsetY = { it }),
+            exit = slideOutVertically(targetOffsetY = { it })
+        ) {
+            currentTrack?.let { track ->
+                FullPlayerSheet(
+                    track = track,
+                    isPlaying = isPlaying,
+                    progressMs = positionMs,
+                    durationMs = durationMs,
+                    onCollapse = { isPlayerExpanded = false },
+                    onOpenQueue = { isQueueOpen = true }
+                )
+            }
+        }
+
+        // Queue Sheet Overlay
+        AnimatedVisibility(
+            visible = isQueueOpen,
+            enter = slideInVertically(initialOffsetY = { it }),
+            exit = slideOutVertically(targetOffsetY = { it })
+        ) {
+            QueueSheet(
+                queue = queue,
+                currentTrack = currentTrack,
+                onClose = { isQueueOpen = false }
+            )
+        }
     }
 }
