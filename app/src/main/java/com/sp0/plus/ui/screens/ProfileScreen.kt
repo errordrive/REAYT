@@ -41,6 +41,12 @@ fun ProfileScreen(
     val realTimeTracks by MusicRepository.realTimeTracks.collectAsState()
     val curatedPlaylists by MusicRepository.curatedPlaylists.collectAsState()
     val likedTracks = remember(realTimeTracks) { realTimeTracks.filter { it.isLiked } }
+    val topArtists = remember(realTimeTracks) {
+        realTimeTracks
+            .filter { it.singer.isNotBlank() }
+            .distinctBy { it.singer }
+            .take(6)
+    }
 
     var showEditProfileDialog by remember { mutableStateOf(false) }
     var editName by remember { mutableStateOf(userName) }
@@ -195,13 +201,6 @@ fun ProfileScreen(
                 }
 
                 // Top Artists Section (dynamically computed from real fetched songs)
-                val topArtists = remember(realTimeTracks) {
-                    realTimeTracks
-                        .filter { it.singer.isNotBlank() }
-                        .distinctBy { it.singer }
-                        .take(6)
-                }
-
                 if (topArtists.isNotEmpty()) {
                     item {
                         Column {

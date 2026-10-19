@@ -93,7 +93,6 @@ class PlaybackService : MediaSessionService() {
             setMediaNotificationProvider(
                 DefaultMediaNotificationProvider.Builder(this)
                     .setChannelId(CHANNEL_ID)
-                    .setSmallIcon(R.drawable.ic_sp0plus_notification)
                     .build()
             )
         } catch (e: Throwable) {
