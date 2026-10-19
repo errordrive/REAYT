@@ -183,8 +183,9 @@ object PlaybackManager {
                 controller.pause()
                 _isPlaying.value = false
             } else {
-                if (controller.playbackState == Player.STATE_IDLE && _currentTrack.value != null) {
-                    playTrack(_currentTrack.value!)
+                val track = _currentTrack.value
+                if (controller.playbackState == Player.STATE_IDLE && track != null) {
+                    playTrack(track)
                 } else {
                     controller.play()
                     _isPlaying.value = true
