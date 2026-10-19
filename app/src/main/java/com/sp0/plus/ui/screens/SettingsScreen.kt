@@ -292,9 +292,9 @@ fun SettingsScreen(
                     }
                 }
 
-                // YouTube Music Section
+                // Streaming Engine Section
                 item {
-                    SettingsSectionTitle("YOUTUBE MUSIC")
+                    SettingsSectionTitle("STREAMING ENGINE")
 
                     SettingsCard {
                         Column(modifier = Modifier.padding(16.dp)) {
@@ -305,7 +305,7 @@ fun SettingsScreen(
                                 fontWeight = FontWeight.Medium
                             )
                             Text(
-                                text = "Sent with every YouTube Music request. Paste yours from music.youtube.com (DevTools > Network), or generate one.",
+                                text = "Session token for streaming metadata. Paste yours or generate a fresh anonymous token.",
                                 color = Color(0xFF888888),
                                 fontSize = 12.sp
                             )

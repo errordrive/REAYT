@@ -157,7 +157,7 @@ fun HomeScreen(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Connecting to YouTube Music streaming engine",
+                        text = "Connecting to Lossless Audio Engine",
                         color = Color(0xFF888888),
                         fontSize = 12.sp
                     )

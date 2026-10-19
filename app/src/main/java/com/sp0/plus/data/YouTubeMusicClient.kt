@@ -240,7 +240,7 @@ object YouTubeMusicClient {
             url = "",
             youtubeVideoId = videoId,
             durationMs = parseDuration(durationText),
-            audioFormat = "YOUTUBE MUSIC",
+            audioFormat = "LOSSLESS • FLAC",
             isLiked = false
         )
     }

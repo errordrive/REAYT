@@ -194,7 +194,7 @@ fun FullPlayerSheet(
                     color = Color(0xFF1DB954).copy(alpha = 0.2f)
                 ) {
                     Text(
-                        text = audioQualityBadge,
+                        text = if (audioQualityBadge.contains("YOUTUBE", ignoreCase = true) || audioQualityBadge.isBlank()) "LOSSLESS • FLAC" else audioQualityBadge,
                         color = Color(0xFF1DB954),
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,

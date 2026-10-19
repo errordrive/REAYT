@@ -172,7 +172,7 @@ fun SearchScreen(
                 )
             } else if (searchFailed) {
                 Text(
-                    text = "YouTube Music unavailable. Check your Visitor ID in Settings. Showing local results.",
+                    text = "Music search unavailable. Check your connection or Visitor ID in Settings. Showing local results.",
                     color = Color(0xFFB3B3B3),
                     fontSize = 12.sp,
                     modifier = Modifier.padding(top = 8.dp)

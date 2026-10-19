@@ -53,7 +53,9 @@ object NetworkModule {
             if (!SettingsManager.adblockDnsEnabled.value ||
                 hostname.contains("googlevideo.com") ||
                 hostname.contains("youtube.com") ||
-                hostname.contains("ytimg.com")
+                hostname.contains("ytimg.com") ||
+                hostname.contains("saavncdn.com") ||
+                hostname.contains("jiosaavn.com")
             ) {
                 return Dns.SYSTEM.lookup(hostname)
             }

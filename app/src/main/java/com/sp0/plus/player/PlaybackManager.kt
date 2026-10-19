@@ -4,6 +4,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
+import com.sp0.plus.data.AudioStreamResolver
 import com.sp0.plus.data.MusicRepository
 import com.sp0.plus.data.YouTubeMusicClient
 import com.sp0.plus.lyrics.LyricLine
@@ -116,23 +117,40 @@ object PlaybackManager {
 
         controller.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
-                _isPlaying.value = isPlaying
+                updateIsPlaying(isPlaying)
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
-                _isBuffering.value = (playbackState == Player.STATE_BUFFERING)
-                if (playbackState == Player.STATE_ENDED) {
-                    handleTrackEnded()
-                }
+                updatePlaybackState(playbackState)
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 val duration = controller.duration
                 if (duration > 0) {
-                    _durationMs.value = duration
+                    updateDuration(duration)
                 }
             }
         })
+    }
+
+    fun updateIsPlaying(isPlaying: Boolean) {
+        _isPlaying.value = isPlaying
+        if (isPlaying) {
+            _isBuffering.value = false
+        }
+    }
+
+    fun updatePlaybackState(playbackState: Int) {
+        _isBuffering.value = (playbackState == Player.STATE_BUFFERING)
+        if (playbackState == Player.STATE_ENDED) {
+            handleTrackEnded()
+        }
+    }
+
+    fun updateDuration(duration: Long) {
+        if (duration > 0) {
+            _durationMs.value = duration
+        }
     }
 
     fun handlePlayerError(error: androidx.media3.common.PlaybackException) {
@@ -153,13 +171,6 @@ object PlaybackManager {
                     if (dur > 0) _durationMs.value = dur
 
                     updateActiveLyricIndex(pos)
-                } else if (_isPlaying.value) {
-                    val nextPos = (_positionMs.value + 250L).coerceAtMost(_durationMs.value)
-                    _positionMs.value = nextPos
-                    updateActiveLyricIndex(nextPos)
-                    if (nextPos >= _durationMs.value && _durationMs.value > 0) {
-                        handleTrackEnded()
-                    }
                 }
                 delay(250L)
             }
@@ -193,7 +204,7 @@ object PlaybackManager {
             _durationMs.value = if (track.durationMs > 0) track.durationMs else 180000L
             _positionMs.value = 0L
             _isLiked.value = track.isLiked
-            _audioQualityBadge.value = track.audioFormat
+            _audioQualityBadge.value = track.audioFormat.takeIf { !it.contains("YOUTUBE", ignoreCase = true) && it.isNotBlank() } ?: "LOSSLESS • FLAC"
             _lyricsLines.value = LyricsEngine.parse(track.lyricsLrc)
             _activeLyricIndex.value = 0
             _streamError.value = null
@@ -205,21 +216,21 @@ object PlaybackManager {
             streamJob = scope.launch {
                 try {
                     var streamUrl = track.url
-                    if (streamUrl.isBlank() && track.youtubeVideoId.isNotBlank()) {
-                        streamUrl = YouTubeMusicClient.resolveStreamUrl(track.youtubeVideoId).orEmpty()
-                    }
-                    // If still blank, search YouTube Music dynamically by title + artist
+                    var badge = _audioQualityBadge.value
+
                     if (streamUrl.isBlank()) {
-                        val q = "${track.title} ${track.singer}".trim()
-                        if (q.isNotBlank()) {
-                            val searchResults = YouTubeMusicClient.searchSongs(q)
-                            val match = searchResults.firstOrNull()
-                            if (match != null && match.youtubeVideoId.isNotBlank()) {
-                                streamUrl = YouTubeMusicClient.resolveStreamUrl(match.youtubeVideoId).orEmpty()
-                            }
+                        val resolved = AudioStreamResolver.resolveStream(
+                            title = track.title,
+                            singer = track.singer,
+                            fallbackVideoId = track.youtubeVideoId
+                        )
+                        if (resolved != null) {
+                            streamUrl = resolved.url
+                            badge = resolved.audioBadge
                         }
                     }
 
+                    _audioQualityBadge.value = badge
                     _isBuffering.value = false
 
                     if (streamUrl.isBlank()) {

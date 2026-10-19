@@ -69,6 +69,21 @@ class PlaybackService : MediaSessionService() {
             .build()
 
         exoPlayer.addListener(object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                com.sp0.plus.player.PlaybackManager.updateIsPlaying(isPlaying)
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                com.sp0.plus.player.PlaybackManager.updatePlaybackState(playbackState)
+            }
+
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                val duration = exoPlayer.duration
+                if (duration > 0) {
+                    com.sp0.plus.player.PlaybackManager.updateDuration(duration)
+                }
+            }
+
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                 android.util.Log.e("PlaybackService", "Playback error: ${error.errorCodeName}", error)
                 com.sp0.plus.player.PlaybackManager.handlePlayerError(error)

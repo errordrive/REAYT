@@ -85,7 +85,7 @@ object MusicRepository {
                         Playlist(
                             id = "p_lossless",
                             title = "Lossless Master Hits",
-                            description = "Studio master quality tracks streaming dynamically from YouTube Music.",
+                            description = "Studio master quality tracks streaming in lossless fidelity.",
                             coverUrl = lossless.firstOrNull()?.coverUri.orEmpty(),
                             tracks = lossless
                         )
