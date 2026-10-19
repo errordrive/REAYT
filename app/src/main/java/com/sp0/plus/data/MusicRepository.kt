@@ -5,6 +5,7 @@ import com.sp0.plus.model.SongsModel
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -249,8 +250,14 @@ object MusicRepository {
         )
     )
 
-    fun loadRealTimeMusic(scope: CoroutineScope) {
-        scope.launch(Dispatchers.IO) {
+    private val repositoryScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    init {
+        loadRealTimeMusic()
+    }
+
+    fun loadRealTimeMusic() {
+        repositoryScope.launch {
             _isLoadingLive.value = true
             try {
                 val live = YouTubeMusicClient.fetchTrending()
