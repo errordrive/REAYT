@@ -42,6 +42,13 @@ fun HomeScreen(
     modifier: Modifier = Modifier
 ) {
     val userName by SettingsManager.userName.collectAsState()
+    val realTimeTracks by MusicRepository.realTimeTracks.collectAsState()
+    val isLoadingLive by MusicRepository.isLoadingLive.collectAsState()
+    val streamError by PlaybackManager.streamError.collectAsState()
+
+    LaunchedEffect(Unit) {
+        MusicRepository.loadRealTimeMusic(this)
+    }
 
     val greeting = when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
         in 5..11 -> "Good morning"
@@ -102,12 +109,34 @@ fun HomeScreen(
                     }
                 }
             }
+
+            if (isLoadingLive) {
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    color = Color(0xFF1DB954),
+                    trackColor = Color(0xFF282828)
+                )
+            }
+
+            streamError?.let { err ->
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF3E1F1F))
+                ) {
+                    Text(
+                        text = err,
+                        color = Color(0xFFFF8888),
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(10.dp)
+                    )
+                }
+            }
         }
 
-        // Quick Play 2-Column Grid
+        // Quick Picks 2-Column Grid
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                val tracks = MusicRepository.sampleTracks.take(6)
+                val tracks = realTimeTracks.take(6)
                 val rows = tracks.chunked(2)
                 for (row in rows) {
                     Row(
@@ -118,7 +147,7 @@ fun HomeScreen(
                             QuickPlayCard(
                                 track = item,
                                 modifier = Modifier.weight(1f),
-                                onClick = { PlaybackManager.playTrack(item) }
+                                onClick = { PlaybackManager.playTrack(item, realTimeTracks) }
                             )
                         }
                         if (row.size == 1) {
@@ -129,23 +158,42 @@ fun HomeScreen(
             }
         }
 
-        // Made For You Section
+        // Global Top Hits
         item {
             Column {
-                Text(
-                    text = "Made For You",
-                    color = Color.White,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Global Top Hits",
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = Color(0xFF1DB954).copy(alpha = 0.2f),
+                        modifier = Modifier.padding(end = 4.dp)
+                    ) {
+                        Text(
+                            text = "LIVE",
+                            color = Color(0xFF1DB954),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
                 Spacer(modifier = Modifier.height(12.dp))
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    items(MusicRepository.sampleTracks) { track ->
+                    items(realTimeTracks) { track ->
                         TrackAlbumCard(
                             track = track,
-                            onClick = { PlaybackManager.playTrack(track) }
+                            onClick = { PlaybackManager.playTrack(track, realTimeTracks) }
                         )
                     }
                 }

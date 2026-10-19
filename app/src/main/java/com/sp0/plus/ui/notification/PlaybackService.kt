@@ -29,18 +29,25 @@ import com.sp0.plus.R
 
 class PlaybackService : MediaSessionService() {
 
-    private var player: ExoPlayer? = null
-    private var mediaSession: MediaSession? = null
+    var player: ExoPlayer? = null
+        private set
+    var mediaSession: MediaSession? = null
+        private set
 
     companion object {
         const val CHANNEL_ID = "sp0_playback"
         const val NOTIFICATION_ID = 1001
         const val ACTION_REPEAT = "ACTION_REPEAT"
         const val ACTION_LIKE = "ACTION_LIKE"
+
+        @Volatile
+        var instance: PlaybackService? = null
+            private set
     }
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         createNotificationChannel()
 
         val audioAttributes = AudioAttributes.Builder()
@@ -60,6 +67,13 @@ class PlaybackService : MediaSessionService() {
             .setHandleAudioBecomingNoisy(true)
             .build()
 
+        exoPlayer.addListener(object : Player.Listener {
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                android.util.Log.e("PlaybackService", "Playback error: ${error.errorCodeName}", error)
+                com.sp0.plus.player.PlaybackManager.handlePlayerError(error)
+            }
+        })
+
         this.player = exoPlayer
 
         val sessionActivityPendingIntent = PendingIntent.getActivity(
@@ -75,6 +89,14 @@ class PlaybackService : MediaSessionService() {
             .build()
 
         startForegroundNotification()
+    }
+
+    fun playMediaItem(item: MediaItem) {
+        player?.let { p ->
+            p.setMediaItem(item)
+            p.prepare()
+            p.play()
+        }
     }
 
     private fun createNotificationChannel() {
@@ -108,12 +130,21 @@ class PlaybackService : MediaSessionService() {
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .build()
 
         try {
-            startForeground(NOTIFICATION_ID, notification)
-        } catch (_: Exception) {
-            // Foreground service start restriction on Android 14+ handled gracefully
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Throwable) {
+            android.util.Log.w("PlaybackService", "Foreground notification deferred: ${e.message}")
         }
     }
 
@@ -122,6 +153,9 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        if (instance == this) {
+            instance = null
+        }
         mediaSession?.run {
             player.release()
             release()
@@ -146,9 +180,18 @@ class PlaybackService : MediaSessionService() {
             controller: MediaSession.ControllerInfo,
             mediaItems: MutableList<MediaItem>
         ): ListenableFuture<MutableList<MediaItem>> {
-            val updatedItems = mediaItems.map {
-                if (it.localConfiguration != null) it
-                else it.buildUpon().setUri(it.requestMetadata.mediaUri).build()
+            val updatedItems = mediaItems.map { item ->
+                val uri = item.localConfiguration?.uri ?: item.requestMetadata.mediaUri
+                if (uri != null) {
+                    item.buildUpon()
+                        .setUri(uri)
+                        .setRequestMetadata(
+                            item.requestMetadata.buildUpon().setMediaUri(uri).build()
+                        )
+                        .build()
+                } else {
+                    item
+                }
             }.toMutableList()
             return Futures.immediateFuture(updatedItems)
         }

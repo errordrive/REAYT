@@ -32,11 +32,15 @@ object YouTubeMusicClient {
     )
 
     // Clients that return direct (un-ciphered) stream URLs, tried in order.
+    // iOS client provides reliable, unthrottled, unciphered audio stream URLs.
     private val playerClients = listOf(
         PlayerClient(
-            "ANDROID_MUSIC", "7.27.52",
-            "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 11) gzip"
-        ) { put("androidSdkVersion", 30); put("osName", "Android"); put("osVersion", "11") },
+            "IOS", "20.10.4",
+            "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)"
+        ) {
+            put("deviceMake", "Apple"); put("deviceModel", "iPhone16,2")
+            put("osName", "iPhone"); put("osVersion", "18.3.2.22D82")
+        },
         PlayerClient(
             "ANDROID_VR", "1.60.19",
             "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
@@ -45,12 +49,9 @@ object YouTubeMusicClient {
             put("androidSdkVersion", 32); put("osName", "Android"); put("osVersion", "12L")
         },
         PlayerClient(
-            "IOS", "20.10.4",
-            "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)"
-        ) {
-            put("deviceMake", "Apple"); put("deviceModel", "iPhone16,2")
-            put("osName", "iPhone"); put("osVersion", "18.3.2.22D82")
-        }
+            "ANDROID_MUSIC", "7.27.52",
+            "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 11) gzip"
+        ) { put("androidSdkVersion", 30); put("osName", "Android"); put("osVersion", "11") }
     )
 
     /** Fetches a fresh anonymous visitor id from YouTube Music. Returns null on failure. */
@@ -82,6 +83,17 @@ object YouTubeMusicClient {
             .put("params", java.net.URLDecoder.decode(SONGS_FILTER, "UTF-8"))
         val json = post("search", body, visitor, NetworkModule.UA_WEB)
         parseSearch(json)
+    }
+
+    /** Fetches real-time trending global music tracks. */
+    suspend fun fetchTrending(): List<SongsModel> = withContext(Dispatchers.IO) {
+        val results = searchSongs("Trending Top Hits 2024")
+        if (results.isNotEmpty()) results else searchSongs("Top 50 Global")
+    }
+
+    /** Fetches lossless / master quality hits. */
+    suspend fun fetchLosslessHits(): List<SongsModel> = withContext(Dispatchers.IO) {
+        searchSongs("Global Lossless Master Hits")
     }
 
     /** Resolves a direct audio URL for [videoId], or null if every client fails. */

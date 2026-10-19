@@ -55,6 +55,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun initializeMediaController() {
+        try {
+            startService(Intent(this, PlaybackService::class.java))
+        } catch (_: Exception) {
+        }
+
         val sessionToken = SessionToken(this, ComponentName(this, PlaybackService::class.java))
         val future = MediaController.Builder(this, sessionToken).buildAsync()
         this.controllerFuture = future

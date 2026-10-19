@@ -43,7 +43,7 @@ fun LibraryScreen(
 
     val filterChips = listOf("All", "Playlists", "Artists", "Albums", "Downloaded")
 
-    val allTracks = MusicRepository.sampleTracks
+    val allTracks by MusicRepository.realTimeTracks.collectAsState()
     val likedTracks = allTracks.filter { it.isLiked }
 
     Column(

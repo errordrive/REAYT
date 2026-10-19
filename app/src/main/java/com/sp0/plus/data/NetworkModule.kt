@@ -31,16 +31,21 @@ object NetworkModule {
         .build()
 
     private val dohDns: DnsOverHttps by lazy {
-        DnsOverHttps.Builder()
-            .client(bootstrapClient)
-            .url(ADGUARD_DOH_URL.toHttpUrl())
-            .bootstrapDnsHosts(
-                InetAddress.getByName("94.140.14.14"),
-                InetAddress.getByName("94.140.15.15"),
-                InetAddress.getByName("2a10:50c0::ad1:ff"),
-                InetAddress.getByName("2a10:50c0::ad2:ff")
-            )
-            .build()
+        try {
+            DnsOverHttps.Builder()
+                .client(bootstrapClient)
+                .url(ADGUARD_DOH_URL.toHttpUrl())
+                .bootstrapDnsHosts(
+                    InetAddress.getByAddress("94.140.14.14", byteArrayOf(94.toByte(), 140.toByte(), 14.toByte(), 14.toByte())),
+                    InetAddress.getByAddress("94.140.15.15", byteArrayOf(94.toByte(), 140.toByte(), 15.toByte(), 15.toByte()))
+                )
+                .build()
+        } catch (_: Throwable) {
+            DnsOverHttps.Builder()
+                .client(bootstrapClient)
+                .url(ADGUARD_DOH_URL.toHttpUrl())
+                .build()
+        }
     }
 
     private val adblockDns = object : Dns {
@@ -48,7 +53,7 @@ object NetworkModule {
             if (!SettingsManager.adblockDnsEnabled.value) return Dns.SYSTEM.lookup(hostname)
             return try {
                 dohDns.lookup(hostname)
-            } catch (_: Exception) {
+            } catch (_: Throwable) {
                 Dns.SYSTEM.lookup(hostname)
             }
         }
@@ -64,8 +69,8 @@ object NetworkModule {
     }
 
     /**
-     * Client for ExoPlayer. googlevideo URLs carry a `c=` param naming the client that
-     * requested them; the User-Agent must match that client or the server answers 403.
+     * Client for ExoPlayer audio streaming. googlevideo URLs carry a `c=` param
+     * naming the client; User-Agent must match that client or the server answers 403.
      */
     val playerClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -74,15 +79,15 @@ object NetworkModule {
             .readTimeout(30, TimeUnit.SECONDS)
             .addInterceptor { chain ->
                 val req = chain.request()
-                val ua = when (req.url.queryParameter("c")) {
+                val isGoogleVideo = req.url.host.contains("googlevideo.com")
+                val cParam = req.url.queryParameter("c")
+                val ua = when (cParam) {
                     "ANDROID_MUSIC" -> UA_ANDROID_MUSIC
-                    "IOS" -> UA_IOS
                     "ANDROID_VR" -> UA_ANDROID_VR
-                    else -> null
+                    "IOS" -> UA_IOS
+                    else -> if (isGoogleVideo) UA_IOS else "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
                 }
-                chain.proceed(
-                    if (ua != null) req.newBuilder().header("User-Agent", ua).build() else req
-                )
+                chain.proceed(req.newBuilder().header("User-Agent", ua).build())
             }
             .build()
     }
