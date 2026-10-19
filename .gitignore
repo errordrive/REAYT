@@ -1,0 +1,28 @@
+# Built application and APK artifacts
+*.apk
+*.aab
+my-apk.apk
+decompiled_src/
+tmp/
+*.log
+
+# Gradle build files
+.gradle/
+build/
+app/build/
+
+# IDE files
+.idea/
+*.iml
+.navigation/
+captures/
+.externalNativeBuild/
+.cxx/
+local.properties
+
+# Environment and sensitive files
+.env
+.env.*
+*.secret
+*.keystore
+*.jks

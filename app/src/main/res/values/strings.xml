@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Sp0+</string>
+    <string name="notification_channel_name">Music Playback</string>
+    <string name="notification_channel_desc">Active playback controls for Sp0+</string>
+    <string name="action_play">Play</string>
+    <string name="action_pause">Pause</string>
+    <string name="action_next">Next</string>
+    <string name="action_prev">Previous</string>
+</resources>
