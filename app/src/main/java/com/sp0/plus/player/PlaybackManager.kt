@@ -10,9 +10,11 @@ import com.sp0.plus.lyrics.LyricLine
 import com.sp0.plus.lyrics.LyricsEngine
 import com.sp0.plus.model.SongsModel
 import com.sp0.plus.ui.notification.PlaybackService
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -26,7 +28,10 @@ enum class RepeatMode {
 
 object PlaybackManager {
 
-    private val scope = CoroutineScope(Dispatchers.Main + Job())
+    private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        android.util.Log.e("PlaybackManager", "Uncaught playback error: ${throwable.message}", throwable)
+    }
+    private val scope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob() + exceptionHandler)
     private var progressJob: Job? = null
     private var streamJob: Job? = null
 
@@ -34,7 +39,7 @@ object PlaybackManager {
     val streamError: StateFlow<String?> = _streamError.asStateFlow()
     private var mediaController: MediaController? = null
 
-    private val _currentTrack = MutableStateFlow<SongsModel?>(MusicRepository.sampleTracks.firstOrNull())
+    private val _currentTrack = MutableStateFlow<SongsModel?>(null)
     val currentTrack: StateFlow<SongsModel?> = _currentTrack.asStateFlow()
 
     private val _isPlaying = MutableStateFlow(false)
@@ -46,10 +51,10 @@ object PlaybackManager {
     private val _positionMs = MutableStateFlow(0L)
     val positionMs: StateFlow<Long> = _positionMs.asStateFlow()
 
-    private val _durationMs = MutableStateFlow(MusicRepository.sampleTracks.firstOrNull()?.durationMs ?: 0L)
+    private val _durationMs = MutableStateFlow(0L)
     val durationMs: StateFlow<Long> = _durationMs.asStateFlow()
 
-    private val _queue = MutableStateFlow(MusicRepository.sampleTracks)
+    private val _queue = MutableStateFlow<List<SongsModel>>(emptyList())
     val queue: StateFlow<List<SongsModel>> = _queue.asStateFlow()
 
     private val _currentIndex = MutableStateFlow(0)
@@ -61,18 +66,16 @@ object PlaybackManager {
     private val _isShuffle = MutableStateFlow(false)
     val isShuffle: StateFlow<Boolean> = _isShuffle.asStateFlow()
 
-    private val _isLiked = MutableStateFlow(MusicRepository.sampleTracks.firstOrNull()?.isLiked ?: false)
+    private val _isLiked = MutableStateFlow(false)
     val isLiked: StateFlow<Boolean> = _isLiked.asStateFlow()
 
-    private val _audioQualityBadge = MutableStateFlow(MusicRepository.sampleTracks.firstOrNull()?.audioFormat ?: "LOSSLESS • FLAC")
+    private val _audioQualityBadge = MutableStateFlow("LOSSLESS • MASTER")
     val audioQualityBadge: StateFlow<String> = _audioQualityBadge.asStateFlow()
 
-    private val _lyricsLines = MutableStateFlow<List<LyricLine>>(
-        LyricsEngine.parse(MusicRepository.sampleTracks.firstOrNull()?.lyricsLrc ?: "")
-    )
+    private val _lyricsLines = MutableStateFlow<List<LyricLine>>(emptyList())
     val lyricsLines: StateFlow<List<LyricLine>> = _lyricsLines.asStateFlow()
 
-    private val _activeLyricIndex = MutableStateFlow(0)
+    private val _activeLyricIndex = MutableStateFlow(-1)
     val activeLyricIndex: StateFlow<Int> = _activeLyricIndex.asStateFlow()
 
     private var sleepTimerJob: Job? = null
@@ -172,100 +175,122 @@ object PlaybackManager {
     }
 
     fun playTrack(track: SongsModel, newQueue: List<SongsModel>? = null) {
-        if (newQueue != null && newQueue.isNotEmpty()) {
-            _queue.value = newQueue
-            _currentIndex.value = newQueue.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
-        } else {
-            val idx = _queue.value.indexOfFirst { it.id == track.id }
-            if (idx >= 0) {
-                _currentIndex.value = idx
+        try {
+            if (newQueue != null && newQueue.isNotEmpty()) {
+                _queue.value = newQueue
+                _currentIndex.value = newQueue.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
             } else {
-                _queue.value = _queue.value + track
-                _currentIndex.value = _queue.value.lastIndex
-            }
-        }
-
-        _currentTrack.value = track
-        _durationMs.value = if (track.durationMs > 0) track.durationMs else 180000L
-        _positionMs.value = 0L
-        _isLiked.value = track.isLiked
-        _audioQualityBadge.value = track.audioFormat
-        _lyricsLines.value = LyricsEngine.parse(track.lyricsLrc)
-        _activeLyricIndex.value = 0
-        _streamError.value = null
-
-        _isPlaying.value = true
-        _isBuffering.value = true
-
-        streamJob?.cancel()
-        streamJob = scope.launch {
-            var streamUrl = track.url
-            if (streamUrl.isBlank() && track.youtubeVideoId.isNotBlank()) {
-                streamUrl = YouTubeMusicClient.resolveStreamUrl(track.youtubeVideoId).orEmpty()
-            }
-            // If still blank, search YouTube Music dynamically by title + artist
-            if (streamUrl.isBlank()) {
-                val q = "${track.title} ${track.singer}".trim()
-                if (q.isNotBlank()) {
-                    val searchResults = try {
-                        YouTubeMusicClient.searchSongs(q)
-                    } catch (_: Exception) {
-                        emptyList()
-                    }
-                    val match = searchResults.firstOrNull()
-                    if (match != null && match.youtubeVideoId.isNotBlank()) {
-                        streamUrl = YouTubeMusicClient.resolveStreamUrl(match.youtubeVideoId).orEmpty()
-                    }
+                val idx = _queue.value.indexOfFirst { it.id == track.id }
+                if (idx >= 0) {
+                    _currentIndex.value = idx
+                } else {
+                    _queue.value = _queue.value + track
+                    _currentIndex.value = _queue.value.lastIndex
                 }
             }
 
-            _isBuffering.value = false
-
-            if (streamUrl.isBlank()) {
-                _isPlaying.value = false
-                _streamError.value = "Couldn't load stream for \"${track.title}\". Please check your connection."
-                return@launch
-            }
+            _currentTrack.value = track
+            _durationMs.value = if (track.durationMs > 0) track.durationMs else 180000L
+            _positionMs.value = 0L
+            _isLiked.value = track.isLiked
+            _audioQualityBadge.value = track.audioFormat
+            _lyricsLines.value = LyricsEngine.parse(track.lyricsLrc)
+            _activeLyricIndex.value = 0
             _streamError.value = null
 
-            executePlayback(track, streamUrl)
+            _isPlaying.value = true
+            _isBuffering.value = true
+
+            streamJob?.cancel()
+            streamJob = scope.launch {
+                try {
+                    var streamUrl = track.url
+                    if (streamUrl.isBlank() && track.youtubeVideoId.isNotBlank()) {
+                        streamUrl = YouTubeMusicClient.resolveStreamUrl(track.youtubeVideoId).orEmpty()
+                    }
+                    // If still blank, search YouTube Music dynamically by title + artist
+                    if (streamUrl.isBlank()) {
+                        val q = "${track.title} ${track.singer}".trim()
+                        if (q.isNotBlank()) {
+                            val searchResults = YouTubeMusicClient.searchSongs(q)
+                            val match = searchResults.firstOrNull()
+                            if (match != null && match.youtubeVideoId.isNotBlank()) {
+                                streamUrl = YouTubeMusicClient.resolveStreamUrl(match.youtubeVideoId).orEmpty()
+                            }
+                        }
+                    }
+
+                    _isBuffering.value = false
+
+                    if (streamUrl.isBlank()) {
+                        _isPlaying.value = false
+                        _streamError.value = "Couldn't load stream for \"${track.title}\". Please check your connection."
+                        return@launch
+                    }
+                    _streamError.value = null
+
+                    executePlayback(track, streamUrl)
+                } catch (e: Throwable) {
+                    android.util.Log.e("PlaybackManager", "Playback stream error: ${e.message}", e)
+                    _isBuffering.value = false
+                    _isPlaying.value = false
+                    _streamError.value = "Playback error: ${e.message}"
+                }
+            }
+        } catch (e: Throwable) {
+            android.util.Log.e("PlaybackManager", "playTrack failed: ${e.message}", e)
         }
     }
 
     private fun executePlayback(track: SongsModel, streamUrl: String) {
-        val uri = android.net.Uri.parse(streamUrl)
-        val mediaMetadata = MediaMetadata.Builder()
-            .setTitle(track.title)
-            .setArtist(track.singer)
-            .setAlbumTitle(track.album)
-            .setArtworkUri(if (track.coverUri.isNotBlank()) android.net.Uri.parse(track.coverUri) else null)
-            .build()
+        try {
+            val uri = android.net.Uri.parse(streamUrl)
+            val mediaMetadata = MediaMetadata.Builder()
+                .setTitle(track.title)
+                .setArtist(track.singer)
+                .setAlbumTitle(track.album)
+                .build()
 
-        val mediaItem = MediaItem.Builder()
-            .setMediaId(track.id.toString())
-            .setUri(uri)
-            .setRequestMetadata(
-                MediaItem.RequestMetadata.Builder()
-                    .setMediaUri(uri)
-                    .build()
-            )
-            .setMediaMetadata(mediaMetadata)
-            .build()
+            val mediaItem = MediaItem.Builder()
+                .setMediaId(track.id.toString())
+                .setUri(uri)
+                .setRequestMetadata(
+                    MediaItem.RequestMetadata.Builder()
+                        .setMediaUri(uri)
+                        .build()
+                )
+                .setMediaMetadata(mediaMetadata)
+                .build()
 
-        // 1. Direct PlaybackService instance execution (in-process, avoids IPC serialization)
-        val srv = PlaybackService.instance
-        if (srv != null && srv.player != null) {
-            srv.playMediaItem(mediaItem)
-            _isPlaying.value = true
-            return
-        }
+            // 1. Direct PlaybackService instance execution (in-process, avoids IPC serialization)
+            val srv = PlaybackService.instance
+            if (srv?.player != null) {
+                try {
+                    srv.playMediaItem(mediaItem)
+                    _isPlaying.value = true
+                    return
+                } catch (e: Throwable) {
+                    android.util.Log.e("PlaybackManager", "Direct playMediaItem failed", e)
+                }
+            }
 
-        // 2. Controller execution fallback
-        mediaController?.let { controller ->
-            controller.setMediaItem(mediaItem)
-            controller.prepare()
-            controller.play()
-            _isPlaying.value = true
+            // 2. Controller execution fallback
+            mediaController?.let { controller ->
+                try {
+                    controller.setMediaItem(mediaItem)
+                    controller.prepare()
+                    controller.play()
+                    _isPlaying.value = true
+                } catch (e: Throwable) {
+                    android.util.Log.e("PlaybackManager", "mediaController play failed", e)
+                    _streamError.value = "Playback engine failed: ${e.message}"
+                }
+            }
+        } catch (e: Throwable) {
+            android.util.Log.e("PlaybackManager", "executePlayback unexpected error: ${e.message}", e)
+            _isPlaying.value = false
+            _isBuffering.value = false
+            _streamError.value = "Playback error: ${e.message}"
         }
     }
 

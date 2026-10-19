@@ -44,6 +44,7 @@ fun HomeScreen(
 ) {
     val userName by SettingsManager.userName.collectAsState()
     val realTimeTracks by MusicRepository.realTimeTracks.collectAsState()
+    val curatedPlaylists by MusicRepository.curatedPlaylists.collectAsState()
     val isLoadingLive by MusicRepository.isLoadingLive.collectAsState()
     val streamError by PlaybackManager.streamError.collectAsState()
 
@@ -134,95 +135,148 @@ fun HomeScreen(
             }
         }
 
-        // Quick Picks 2-Column Grid
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                val tracks = realTimeTracks.take(6)
-                val rows = tracks.chunked(2)
-                for (row in rows) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        for (item in row) {
-                            QuickPlayCard(
-                                track = item,
-                                modifier = Modifier.weight(1f),
-                                onClick = { PlaybackManager.playTrack(item, realTimeTracks) }
-                            )
-                        }
-                        if (row.size == 1) {
-                            Spacer(modifier = Modifier.weight(1f))
-                        }
-                    }
+        if (realTimeTracks.isEmpty() && isLoadingLive) {
+            item {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 48.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    CircularProgressIndicator(
+                        color = Color(0xFF1DB954),
+                        modifier = Modifier.size(36.dp),
+                        strokeWidth = 3.dp
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Loading real-time music...",
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Connecting to YouTube Music streaming engine",
+                        color = Color(0xFF888888),
+                        fontSize = 12.sp
+                    )
                 }
             }
         }
 
-        // Global Top Hits
-        item {
-            Column {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Global Top Hits",
-                        color = Color.White,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Surface(
-                        shape = RoundedCornerShape(4.dp),
-                        color = Color(0xFF1DB954).copy(alpha = 0.2f),
-                        modifier = Modifier.padding(end = 4.dp)
-                    ) {
-                        Text(
-                            text = "LIVE",
-                            color = Color(0xFF1DB954),
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
+        // Quick Picks 2-Column Grid
+        if (realTimeTracks.isNotEmpty()) {
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val tracks = realTimeTracks.take(6)
+                    val rows = tracks.chunked(2)
+                    for (row in rows) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            for (item in row) {
+                                QuickPlayCard(
+                                    track = item,
+                                    modifier = Modifier.weight(1f),
+                                    onClick = { PlaybackManager.playTrack(item, realTimeTracks) }
+                                )
+                            }
+                            if (row.size == 1) {
+                                Spacer(modifier = Modifier.weight(1f))
+                            }
+                        }
                     }
                 }
-                Spacer(modifier = Modifier.height(12.dp))
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    items(realTimeTracks) { track ->
-                        TrackAlbumCard(
-                            track = track,
-                            onClick = { PlaybackManager.playTrack(track, realTimeTracks) }
+            }
+
+            // Global Top Hits
+            item {
+                Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Global Top Hits",
+                            color = Color.White,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold
                         )
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = Color(0xFF1DB954).copy(alpha = 0.2f),
+                            modifier = Modifier.padding(end = 4.dp)
+                        ) {
+                            Text(
+                                text = "LIVE",
+                                color = Color(0xFF1DB954),
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        items(realTimeTracks) { track ->
+                            TrackAlbumCard(
+                                track = track,
+                                onClick = { PlaybackManager.playTrack(track, realTimeTracks) }
+                            )
+                        }
                     }
                 }
             }
         }
 
         // Curated Lossless Playlists
-        item {
-            Column {
-                Text(
-                    text = "Lossless Playlists",
-                    color = Color.White,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    items(MusicRepository.curatedPlaylists) { playlist ->
-                        PlaylistCard(
-                            playlist = playlist,
-                            onClick = {
-                                if (playlist.tracks.isNotEmpty()) {
-                                    PlaybackManager.playTrack(playlist.tracks.first(), playlist.tracks)
-                                }
-                            }
+        if (curatedPlaylists.isNotEmpty()) {
+            item {
+                Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Lossless Playlists",
+                            color = Color.White,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold
                         )
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = Color(0xFF1DB954).copy(alpha = 0.2f),
+                            modifier = Modifier.padding(end = 4.dp)
+                        ) {
+                            Text(
+                                text = "STUDIO MASTER",
+                                color = Color(0xFF1DB954),
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        items(curatedPlaylists) { playlist ->
+                            PlaylistCard(
+                                playlist = playlist,
+                                onClick = {
+                                    if (playlist.tracks.isNotEmpty()) {
+                                        PlaybackManager.playTrack(playlist.tracks.first(), playlist.tracks)
+                                    }
+                                }
+                            )
+                        }
                     }
                 }
             }

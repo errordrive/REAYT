@@ -38,6 +38,7 @@ fun ProfileScreen(
     val userName by SettingsManager.userName.collectAsState()
     val userEmail by SettingsManager.userEmail.collectAsState()
     val accountTier by SettingsManager.accountTier.collectAsState()
+    val realTimeTracks by MusicRepository.realTimeTracks.collectAsState()
 
     var showEditProfileDialog by remember { mutableStateOf(false) }
     var editName by remember { mutableStateOf(userName) }
@@ -204,10 +205,11 @@ fun ProfileScreen(
                         Spacer(modifier = Modifier.height(12.dp))
 
                         val topArtists = listOf(
-                            "Solaris Dreams" to "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=300",
-                            "Cyber City" to "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=300",
-                            "Luna Strings" to "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300",
-                            "Hyperdrive" to "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=300"
+                            "The Weeknd" to "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=300",
+                            "Taylor Swift" to "https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?w=300",
+                            "Lady Gaga" to "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300",
+                            "Arijit Singh" to "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300",
+                            "Bruno Mars" to "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=300"
                         )
 
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -241,27 +243,28 @@ fun ProfileScreen(
                 }
 
                 // Recently Played Section
-                item {
-                    Column {
-                        Text(
-                            text = "Recently Played",
-                            color = Color.White,
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                if (realTimeTracks.isNotEmpty()) {
+                    item {
+                        Column {
+                            Text(
+                                text = "Recently Played",
+                                color = Color.White,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold
+                            )
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                            Spacer(modifier = Modifier.height(12.dp))
 
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            MusicRepository.sampleTracks.take(3).forEach { track ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .clickable { PlaybackManager.playTrack(track) }
-                                        .padding(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                realTimeTracks.take(4).forEach { track ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable { PlaybackManager.playTrack(track, realTimeTracks) }
+                                            .padding(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
                                     AsyncImage(
                                         model = track.coverUri.ifEmpty { R.drawable.logo },
                                         contentDescription = null,

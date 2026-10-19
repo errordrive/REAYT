@@ -76,13 +76,18 @@ object YouTubeMusicClient {
 
     suspend fun searchSongs(query: String): List<SongsModel> = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext emptyList()
-        val visitor = ensureVisitorData()
-        val body = JSONObject()
-            .put("context", webContext(visitor))
-            .put("query", query.trim())
-            .put("params", java.net.URLDecoder.decode(SONGS_FILTER, "UTF-8"))
-        val json = post("search", body, visitor, NetworkModule.UA_WEB)
-        parseSearch(json)
+        try {
+            val visitor = try { ensureVisitorData() } catch (_: Throwable) { "" }
+            val body = JSONObject()
+                .put("context", webContext(visitor))
+                .put("query", query.trim())
+                .put("params", java.net.URLDecoder.decode(SONGS_FILTER, "UTF-8"))
+            val json = post("search", body, visitor, NetworkModule.UA_WEB)
+            parseSearch(json)
+        } catch (e: Throwable) {
+            android.util.Log.w("YouTubeMusicClient", "searchSongs failed for '$query': ${e.message}")
+            emptyList()
+        }
     }
 
     /** Fetches real-time trending global music tracks. */
@@ -93,12 +98,20 @@ object YouTubeMusicClient {
 
     /** Fetches lossless / master quality hits. */
     suspend fun fetchLosslessHits(): List<SongsModel> = withContext(Dispatchers.IO) {
-        searchSongs("Global Lossless Master Hits")
+        val results = searchSongs("Global Lossless Master Hits")
+        if (results.isNotEmpty()) results else searchSongs("Audiophile Master Hits")
+    }
+
+    /** Fetches chill and lofi tracks for relaxing playlists. */
+    suspend fun fetchChillHits(): List<SongsModel> = withContext(Dispatchers.IO) {
+        val results = searchSongs("Lo-Fi Chill Beats 2024")
+        if (results.isNotEmpty()) results else searchSongs("Late Night Chill Lo-Fi")
     }
 
     /** Resolves a direct audio URL for [videoId], or null if every client fails. */
     suspend fun resolveStreamUrl(videoId: String): String? = withContext(Dispatchers.IO) {
-        val visitor = ensureVisitorData()
+        if (videoId.isBlank()) return@withContext null
+        val visitor = try { ensureVisitorData() } catch (_: Throwable) { "" }
         for (client in playerClients) {
             try {
                 val ctx = JSONObject().put(
@@ -121,7 +134,7 @@ object YouTubeMusicClient {
                 if (json.optJSONObject("playabilityStatus")?.optString("status") != "OK") continue
                 val url = pickAudioUrl(json)
                 if (url != null) return@withContext url
-            } catch (_: Exception) {
+            } catch (_: Throwable) {
                 // try next client
             }
         }

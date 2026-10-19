@@ -87,15 +87,27 @@ class PlaybackService : MediaSessionService() {
             .setSessionActivity(sessionActivityPendingIntent)
             .setCallback(CustomMediaSessionCallback())
             .build()
-
-        startForegroundNotification()
     }
 
     fun playMediaItem(item: MediaItem) {
         player?.let { p ->
-            p.setMediaItem(item)
-            p.prepare()
-            p.play()
+            try {
+                if (item.localConfiguration?.uri != null) {
+                    p.setMediaItem(item)
+                    p.prepare()
+                    p.play()
+                }
+            } catch (e: Throwable) {
+                android.util.Log.e("PlaybackService", "playMediaItem failed: ${e.message}", e)
+            }
+        }
+    }
+
+    override fun onUpdateNotification(session: MediaSession, startInForegroundRequired: Boolean) {
+        try {
+            super.onUpdateNotification(session, startInForegroundRequired)
+        } catch (e: Throwable) {
+            android.util.Log.w("PlaybackService", "onUpdateNotification deferred: ${e.message}")
         }
     }
 
@@ -111,40 +123,6 @@ class PlaybackService : MediaSessionService() {
             }
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
             manager?.createNotificationChannel(channel)
-        }
-    }
-
-    private fun startForegroundNotification() {
-        val launchIntent = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_sp0plus_notification)
-            .setContentTitle("Sp0+")
-            .setContentText("Playback Engine Ready")
-            .setContentIntent(launchIntent)
-            .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .build()
-
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(
-                    NOTIFICATION_ID,
-                    notification,
-                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
-                )
-            } else {
-                startForeground(NOTIFICATION_ID, notification)
-            }
-        } catch (e: Throwable) {
-            android.util.Log.w("PlaybackService", "Foreground notification deferred: ${e.message}")
         }
     }
 
@@ -180,7 +158,7 @@ class PlaybackService : MediaSessionService() {
             controller: MediaSession.ControllerInfo,
             mediaItems: MutableList<MediaItem>
         ): ListenableFuture<MutableList<MediaItem>> {
-            val updatedItems = mediaItems.map { item ->
+            val updatedItems = mediaItems.mapNotNull { item ->
                 val uri = item.localConfiguration?.uri ?: item.requestMetadata.mediaUri
                 if (uri != null) {
                     item.buildUpon()
@@ -190,7 +168,7 @@ class PlaybackService : MediaSessionService() {
                         )
                         .build()
                 } else {
-                    item
+                    null
                 }
             }.toMutableList()
             return Futures.immediateFuture(updatedItems)
