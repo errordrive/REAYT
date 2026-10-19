@@ -174,6 +174,7 @@ object YouTubeMusicClient {
         val streaming = player.optJSONObject("streamingData") ?: return null
         val formats = JSONArray().also { arr ->
             streaming.optJSONArray("adaptiveFormats")?.let { for (i in 0 until it.length()) arr.put(it.get(i)) }
+            streaming.optJSONArray("formats")?.let { for (i in 0 until it.length()) arr.put(it.get(i)) }
         }
         var best: JSONObject? = null
         for (i in 0 until formats.length()) {
@@ -232,7 +233,7 @@ object YouTubeMusicClient {
             .replace(Regex("=w\\d+-h\\d+.*$"), "=w600-h600")
 
         return SongsModel(
-            id = videoId.hashCode(),
+            id = videoId,
             title = title,
             album = album,
             singer = artist,

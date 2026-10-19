@@ -66,8 +66,12 @@ class MainActivity : ComponentActivity() {
 
     private fun initializeMediaController() {
         try {
-            startService(Intent(this, PlaybackService::class.java))
-        } catch (_: Exception) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                startForegroundService(Intent(this, PlaybackService::class.java))
+            else
+                startService(Intent(this, PlaybackService::class.java))
+        } catch (e: Exception) {
+            android.util.Log.w("MainActivity", "Service start failed: ${e.message}")
         }
 
         val sessionToken = SessionToken(this, ComponentName(this, PlaybackService::class.java))

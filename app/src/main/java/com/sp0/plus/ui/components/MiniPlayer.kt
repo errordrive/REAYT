@@ -36,6 +36,7 @@ fun MiniPlayer(
     modifier: Modifier = Modifier
 ) {
     val isLiked by PlaybackManager.isLiked.collectAsState()
+    val audioQualityBadge by PlaybackManager.audioQualityBadge.collectAsState()
 
     val progressFraction = if (durationMs > 0) {
         (progressMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
@@ -99,7 +100,7 @@ fun MiniPlayer(
                     modifier = Modifier.padding(end = 4.dp)
                 ) {
                     Text(
-                        text = "LOSSLESS",
+                        text = audioQualityBadge,
                         color = Color(0xFF1DB954),
                         fontSize = 8.sp,
                         fontWeight = FontWeight.Bold,

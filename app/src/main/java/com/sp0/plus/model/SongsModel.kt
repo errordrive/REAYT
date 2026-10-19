@@ -1,7 +1,7 @@
 package com.sp0.plus.model
 
 data class SongsModel(
-    val id: Int,
+    val id: String,
     val title: String,
     val album: String = "",
     val singer: String = "",
@@ -18,7 +18,7 @@ data class SongsModel(
 ) {
     // Backward compatibility helper
     fun toTrack(): Track = Track(
-        id = id.toString(),
+        id = id,
         title = title,
         artist = singer,
         album = album,

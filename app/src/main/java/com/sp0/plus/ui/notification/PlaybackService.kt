@@ -77,13 +77,6 @@ class PlaybackService : MediaSessionService() {
                 com.sp0.plus.player.PlaybackManager.updatePlaybackState(playbackState)
             }
 
-            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                val duration = exoPlayer.duration
-                if (duration > 0) {
-                    com.sp0.plus.player.PlaybackManager.updateDuration(duration)
-                }
-            }
-
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                 android.util.Log.e("PlaybackService", "Playback error: ${error.errorCodeName}", error)
                 com.sp0.plus.player.PlaybackManager.handlePlayerError(error)
@@ -123,6 +116,13 @@ class PlaybackService : MediaSessionService() {
                     p.setMediaItem(item)
                     p.prepare()
                     p.play()
+                } else {
+                    val ex = androidx.media3.common.PlaybackException(
+                        "MediaItem URI is null",
+                        null,
+                        androidx.media3.common.PlaybackException.ERROR_CODE_FAILED_RUNTIME_CHECK
+                    )
+                    com.sp0.plus.player.PlaybackManager.handlePlayerError(ex)
                 }
             } catch (e: Throwable) {
                 android.util.Log.e("PlaybackService", "playMediaItem failed: ${e.message}", e)

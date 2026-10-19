@@ -13,7 +13,7 @@ data class Track(
     val isLiked: Boolean = false
 ) {
     fun toSongsModel(): SongsModel = SongsModel(
-        id = id.hashCode(),
+        id = id,
         title = title,
         singer = artist,
         album = album,

@@ -35,6 +35,7 @@ object PlaybackManager {
     private val scope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob() + exceptionHandler)
     private var progressJob: Job? = null
     private var streamJob: Job? = null
+    private var retryJob: Job? = null
 
     private val _streamError = MutableStateFlow<String?>(null)
     val streamError: StateFlow<String?> = _streamError.asStateFlow()
@@ -42,6 +43,9 @@ object PlaybackManager {
 
     private val _currentTrack = MutableStateFlow<SongsModel?>(null)
     val currentTrack: StateFlow<SongsModel?> = _currentTrack.asStateFlow()
+
+    private val _isPending = MutableStateFlow(false)
+    val isPending: StateFlow<Boolean> = _isPending.asStateFlow()
 
     private val _isPlaying = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
@@ -123,26 +127,30 @@ object PlaybackManager {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 updatePlaybackState(playbackState)
             }
-
-            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                val duration = controller.duration
-                if (duration > 0) {
-                    updateDuration(duration)
-                }
-            }
         })
     }
 
     fun updateIsPlaying(isPlaying: Boolean) {
         _isPlaying.value = isPlaying
         if (isPlaying) {
+            _isPending.value = false
             _isBuffering.value = false
         }
     }
 
     fun updatePlaybackState(playbackState: Int) {
         _isBuffering.value = (playbackState == Player.STATE_BUFFERING)
-        if (playbackState == Player.STATE_ENDED) {
+        if (playbackState == Player.STATE_READY) {
+            _isBuffering.value = false
+            _isPending.value = false
+            val activePlayer = PlaybackService.instance?.player ?: mediaController
+            val duration = activePlayer?.duration ?: 0L
+            if (duration > 0) {
+                _durationMs.value = duration
+            }
+        } else if (playbackState == Player.STATE_ENDED) {
+            _isPending.value = false
+            _isBuffering.value = false
             handleTrackEnded()
         }
     }
@@ -154,6 +162,7 @@ object PlaybackManager {
     }
 
     fun handlePlayerError(error: androidx.media3.common.PlaybackException) {
+        _isPending.value = false
         _isBuffering.value = false
         _isPlaying.value = false
         _streamError.value = "Playback error: ${error.message ?: error.errorCodeName}"
@@ -209,9 +218,10 @@ object PlaybackManager {
             _activeLyricIndex.value = 0
             _streamError.value = null
 
-            _isPlaying.value = true
+            _isPending.value = true
             _isBuffering.value = true
 
+            retryJob?.cancel()
             streamJob?.cancel()
             streamJob = scope.launch {
                 try {
@@ -231,9 +241,10 @@ object PlaybackManager {
                     }
 
                     _audioQualityBadge.value = badge
-                    _isBuffering.value = false
 
                     if (streamUrl.isBlank()) {
+                        _isPending.value = false
+                        _isBuffering.value = false
                         _isPlaying.value = false
                         _streamError.value = "Couldn't load stream for \"${track.title}\". Please check your connection."
                         return@launch
@@ -243,6 +254,7 @@ object PlaybackManager {
                     executePlayback(track, streamUrl)
                 } catch (e: Throwable) {
                     android.util.Log.e("PlaybackManager", "Playback stream error: ${e.message}", e)
+                    _isPending.value = false
                     _isBuffering.value = false
                     _isPlaying.value = false
                     _streamError.value = "Playback error: ${e.message}"
@@ -263,7 +275,7 @@ object PlaybackManager {
                 .build()
 
             val mediaItem = MediaItem.Builder()
-                .setMediaId(track.id.toString())
+                .setMediaId(track.id)
                 .setUri(uri)
                 .setRequestMetadata(
                     MediaItem.RequestMetadata.Builder()
@@ -278,7 +290,6 @@ object PlaybackManager {
             if (srv?.player != null) {
                 try {
                     srv.playMediaItem(mediaItem)
-                    _isPlaying.value = true
                     return
                 } catch (e: Throwable) {
                     android.util.Log.e("PlaybackManager", "Direct playMediaItem failed", e)
@@ -292,7 +303,6 @@ object PlaybackManager {
                         controller.setMediaItem(mediaItem)
                         controller.prepare()
                         controller.play()
-                        _isPlaying.value = true
                     } catch (e: Throwable) {
                         android.util.Log.e("PlaybackManager", "mediaController play failed", e)
                         _streamError.value = "Playback engine failed: ${e.message}"
@@ -300,13 +310,15 @@ object PlaybackManager {
                 }
             } else if (srv == null) {
                 // If neither service nor controller is connected yet, retry once after short delay
-                scope.launch {
+                retryJob?.cancel()
+                retryJob = scope.launch {
                     delay(400L)
                     executePlayback(track, streamUrl)
                 }
             }
         } catch (e: Throwable) {
             android.util.Log.e("PlaybackManager", "executePlayback unexpected error: ${e.message}", e)
+            _isPending.value = false
             _isPlaying.value = false
             _isBuffering.value = false
             _streamError.value = "Playback error: ${e.message}"
@@ -396,7 +408,8 @@ object PlaybackManager {
         when (_repeatMode.value) {
             RepeatMode.ONE -> {
                 seekTo(0L)
-                mediaController?.play()
+                val activePlayer = PlaybackService.instance?.player ?: mediaController
+                activePlayer?.play()
             }
             RepeatMode.ALL -> skipNext()
             RepeatMode.OFF -> {
