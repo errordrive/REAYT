@@ -243,8 +243,8 @@ fun ProfileScreen(
                 }
 
                 // Recently Played Section
-                if (realTimeTracks.isNotEmpty()) {
-                    item {
+                item {
+                    if (realTimeTracks.isNotEmpty()) {
                         Column {
                             Text(
                                 text = "Recently Played",
@@ -265,42 +265,43 @@ fun ProfileScreen(
                                             .padding(8.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                    AsyncImage(
-                                        model = track.coverUri.ifEmpty { R.drawable.logo },
-                                        contentDescription = null,
-                                        modifier = Modifier
-                                            .size(48.dp)
-                                            .clip(RoundedCornerShape(6.dp))
-                                            .background(Color(0xFF282828)),
-                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
-                                    )
-
-                                    Spacer(modifier = Modifier.width(12.dp))
-
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = track.title,
-                                            color = Color.White,
-                                            fontSize = 14.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
+                                        AsyncImage(
+                                            model = track.coverUri.ifEmpty { R.drawable.logo },
+                                            contentDescription = null,
+                                            modifier = Modifier
+                                                .size(48.dp)
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(Color(0xFF282828)),
+                                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
                                         )
-                                        Text(
-                                            text = track.singer,
-                                            color = Color(0xFF888888),
-                                            fontSize = 12.sp,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
+
+                                        Spacer(modifier = Modifier.width(12.dp))
+
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = track.title,
+                                                color = Color.White,
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = track.singer,
+                                                color = Color(0xFF888888),
+                                                fontSize = 12.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+
+                                        Icon(
+                                            painter = painterResource(R.drawable.added),
+                                            contentDescription = null,
+                                            tint = Color(0xFF1DB954),
+                                            modifier = Modifier.size(18.dp)
                                         )
                                     }
-
-                                    Icon(
-                                        painter = painterResource(R.drawable.added),
-                                        contentDescription = null,
-                                        tint = Color(0xFF1DB954),
-                                        modifier = Modifier.size(18.dp)
-                                    )
                                 }
                             }
                         }
