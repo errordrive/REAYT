@@ -27,6 +27,7 @@ import com.sp0.plus.data.MusicRepository
 import com.sp0.plus.model.SongsModel
 import com.sp0.plus.player.PlaybackManager
 
+import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 
 @Composable
