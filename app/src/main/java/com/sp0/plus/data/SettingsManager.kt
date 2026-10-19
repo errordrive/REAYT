@@ -66,8 +66,17 @@ object SettingsManager {
     private val _cacheSizeFormatted = MutableStateFlow("Calculating...")
     val cacheSizeFormatted: StateFlow<String> = _cacheSizeFormatted.asStateFlow()
 
+    private val _visitorData = MutableStateFlow("")
+    val visitorData: StateFlow<String> = _visitorData.asStateFlow()
+
+    private val _adblockDnsEnabled = MutableStateFlow(true)
+    val adblockDnsEnabled: StateFlow<Boolean> = _adblockDnsEnabled.asStateFlow()
+
     fun init(context: Context) {
         prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+        _visitorData.value = prefs.getString("yt_visitor_data", "") ?: ""
+        _adblockDnsEnabled.value = prefs.getBoolean("adblock_dns_enabled", true)
 
         _isLoggedIn.value = prefs.getBoolean("is_logged_in", true)
 
@@ -91,6 +100,17 @@ object SettingsManager {
         _accountTier.value = prefs.getString("account_tier", "Sp0+ Lossless VIP (Permanent)") ?: "Sp0+ Lossless VIP (Permanent)"
 
         calculateCacheSize(context)
+    }
+
+    fun setVisitorData(value: String) {
+        val clean = value.trim()
+        _visitorData.value = clean
+        prefs.edit().putString("yt_visitor_data", clean).apply()
+    }
+
+    fun setAdblockDnsEnabled(enabled: Boolean) {
+        _adblockDnsEnabled.value = enabled
+        prefs.edit().putBoolean("adblock_dns_enabled", enabled).apply()
     }
 
     fun setWifiQuality(quality: AudioQuality) {

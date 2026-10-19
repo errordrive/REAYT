@@ -5,6 +5,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import com.sp0.plus.data.MusicRepository
+import com.sp0.plus.data.YouTubeMusicClient
 import com.sp0.plus.lyrics.LyricLine
 import com.sp0.plus.lyrics.LyricsEngine
 import com.sp0.plus.model.SongsModel
@@ -26,6 +27,10 @@ object PlaybackManager {
 
     private val scope = CoroutineScope(Dispatchers.Main + Job())
     private var progressJob: Job? = null
+    private var streamJob: Job? = null
+
+    private val _streamError = MutableStateFlow<String?>(null)
+    val streamError: StateFlow<String?> = _streamError.asStateFlow()
     private var mediaController: MediaController? = null
 
     private val _currentTrack = MutableStateFlow<SongsModel?>(MusicRepository.sampleTracks.firstOrNull())
@@ -184,25 +189,40 @@ object PlaybackManager {
         _lyricsLines.value = LyricsEngine.parse(track.lyricsLrc)
         _activeLyricIndex.value = 0
 
-        mediaController?.let { controller ->
-            val mediaMetadata = MediaMetadata.Builder()
-                .setTitle(track.title)
-                .setArtist(track.singer)
-                .setAlbumTitle(track.album)
-                .build()
+        _isPlaying.value = true
+        streamJob?.cancel()
+        streamJob = scope.launch {
+            var streamUrl = track.url
+            if (streamUrl.isBlank() && track.youtubeVideoId.isNotBlank()) {
+                _isBuffering.value = true
+                streamUrl = YouTubeMusicClient.resolveStreamUrl(track.youtubeVideoId).orEmpty()
+                _isBuffering.value = false
+            }
+            if (streamUrl.isBlank()) {
+                // Could not resolve a stream (expired visitor id, blocked client, offline...).
+                _isPlaying.value = false
+                _streamError.value = "Couldn't load \"${track.title}\". Try a new Visitor ID in Settings."
+                return@launch
+            }
+            _streamError.value = null
 
-            val mediaItem = MediaItem.Builder()
-                .setMediaId(track.id.toString())
-                .setUri(track.url)
-                .setMediaMetadata(mediaMetadata)
-                .build()
+            mediaController?.let { controller ->
+                val mediaMetadata = MediaMetadata.Builder()
+                    .setTitle(track.title)
+                    .setArtist(track.singer)
+                    .setAlbumTitle(track.album)
+                    .build()
 
-            controller.setMediaItem(mediaItem)
-            controller.prepare()
-            controller.play()
-            _isPlaying.value = true
-        } ?: run {
-            _isPlaying.value = true
+                val mediaItem = MediaItem.Builder()
+                    .setMediaId(track.id.toString())
+                    .setUri(streamUrl)
+                    .setMediaMetadata(mediaMetadata)
+                    .build()
+
+                controller.setMediaItem(mediaItem)
+                controller.prepare()
+                controller.play()
+            }
         }
     }
 

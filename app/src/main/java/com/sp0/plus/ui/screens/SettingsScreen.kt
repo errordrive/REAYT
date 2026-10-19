@@ -21,7 +21,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sp0.plus.R
 import com.sp0.plus.data.AudioQuality
+import com.sp0.plus.data.NetworkModule
 import com.sp0.plus.data.SettingsManager
+import com.sp0.plus.data.YouTubeMusicClient
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Intent
+import android.provider.Settings
+import android.widget.Toast
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -49,6 +57,12 @@ fun SettingsScreen(
     val userEmail by SettingsManager.userEmail.collectAsState()
     val accountTier by SettingsManager.accountTier.collectAsState()
     val cacheSize by SettingsManager.cacheSizeFormatted.collectAsState()
+
+    val visitorData by SettingsManager.visitorData.collectAsState()
+    val adblockDns by SettingsManager.adblockDnsEnabled.collectAsState()
+    var visitorInput by remember(visitorData) { mutableStateOf(visitorData) }
+    var fetchingVisitor by remember { mutableStateOf(false) }
+    val uiScope = rememberCoroutineScope()
 
     var showQualityDialogFor by remember { mutableStateOf<String?>(null) }
     var showEqualizerDialog by remember { mutableStateOf(false) }
@@ -274,6 +288,90 @@ fun SettingsScreen(
                             title = "Audio output devices",
                             subtitle = "Select audio route or speaker",
                             onClick = onOpenMediaOutput
+                        )
+                    }
+                }
+
+                // YouTube Music Section
+                item {
+                    SettingsSectionTitle("YOUTUBE MUSIC")
+
+                    SettingsCard {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                text = "X-Goog-Visitor-Id",
+                                color = Color.White,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "Sent with every YouTube Music request. Paste yours from music.youtube.com (DevTools > Network), or generate one.",
+                                color = Color(0xFF888888),
+                                fontSize = 12.sp
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = visitorInput,
+                                onValueChange = { visitorInput = it },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White,
+                                    focusedBorderColor = Color(0xFF1DB954),
+                                    unfocusedBorderColor = Color(0xFF444444)
+                                )
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = {
+                                        SettingsManager.setVisitorData(visitorInput)
+                                        Toast.makeText(context, "Visitor ID saved", Toast.LENGTH_SHORT).show()
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1DB954))
+                                ) { Text("Save", color = Color.Black, fontSize = 12.sp) }
+
+                                Button(
+                                    enabled = !fetchingVisitor,
+                                    onClick = {
+                                        fetchingVisitor = true
+                                        uiScope.launch {
+                                            val fresh = YouTubeMusicClient.fetchVisitorData()
+                                            fetchingVisitor = false
+                                            if (fresh != null) {
+                                                SettingsManager.setVisitorData(fresh)
+                                                Toast.makeText(context, "New Visitor ID generated", Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                Toast.makeText(context, "Couldn't generate one. Check your connection.", Toast.LENGTH_LONG).show()
+                                            }
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333))
+                                ) { Text(if (fetchingVisitor) "Generating..." else "Generate", color = Color.White, fontSize = 12.sp) }
+                            }
+                        }
+
+                        SettingsSwitchRow(
+                            title = "Ad-blocking DNS (in-app)",
+                            subtitle = "Resolve this app's traffic through AdGuard DNS (DNS-over-HTTPS)",
+                            checked = adblockDns,
+                            onCheckedChange = { SettingsManager.setAdblockDnsEnabled(it) }
+                        )
+
+                        SettingsClickableRow(
+                            title = "System Private DNS",
+                            subtitle = "Copies ${NetworkModule.PRIVATE_DNS_HOSTNAME}, then opens network settings. Choose Private DNS > provider hostname and paste.",
+                            onClick = {
+                                val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                cm.setPrimaryClip(ClipData.newPlainText("Private DNS", NetworkModule.PRIVATE_DNS_HOSTNAME))
+                                Toast.makeText(context, "Hostname copied. Paste it under Private DNS.", Toast.LENGTH_LONG).show()
+                                try {
+                                    context.startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                                } catch (_: Exception) {
+                                    context.startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                                }
+                            }
                         )
                     }
                 }

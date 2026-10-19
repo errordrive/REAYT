@@ -1,6 +1,7 @@
 # Built application and APK artifacts
 *.apk
 *.aab
+*.zip
 my-apk.apk
 decompiled_src/
 tmp/

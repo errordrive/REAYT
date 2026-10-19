@@ -29,6 +29,8 @@ import coil.compose.AsyncImage
 import com.sp0.plus.R
 import com.sp0.plus.data.Category
 import com.sp0.plus.data.MusicRepository
+import com.sp0.plus.data.YouTubeMusicClient
+import kotlinx.coroutines.delay
 import com.sp0.plus.lyrics.LyricsEngine
 import com.sp0.plus.model.SongsModel
 import com.sp0.plus.player.PlaybackManager
@@ -38,8 +40,28 @@ fun SearchScreen(
     modifier: Modifier = Modifier
 ) {
     var searchQuery by remember { mutableStateOf("") }
-    val searchResults = remember(searchQuery) {
-        MusicRepository.search(searchQuery)
+    var isSearching by remember { mutableStateOf(false) }
+    var searchFailed by remember { mutableStateOf(false) }
+    var searchResults by remember { mutableStateOf<List<SongsModel>>(emptyList()) }
+
+    // Debounced YouTube Music search; falls back to the bundled demo tracks if offline/blocked.
+    LaunchedEffect(searchQuery) {
+        if (searchQuery.isBlank()) {
+            searchResults = emptyList()
+            isSearching = false
+            searchFailed = false
+            return@LaunchedEffect
+        }
+        delay(400L)
+        isSearching = true
+        val remote = try {
+            YouTubeMusicClient.searchSongs(searchQuery)
+        } catch (_: Exception) {
+            emptyList()
+        }
+        searchFailed = remote.isEmpty()
+        searchResults = remote.ifEmpty { MusicRepository.search(searchQuery) }
+        isSearching = false
     }
 
     Column(
@@ -142,6 +164,21 @@ fun SearchScreen(
                 fontWeight = FontWeight.Bold
             )
 
+            if (isSearching) {
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    color = Color(0xFF1DB954),
+                    trackColor = Color(0xFF282828)
+                )
+            } else if (searchFailed) {
+                Text(
+                    text = "YouTube Music unavailable. Check your Visitor ID in Settings. Showing local results.",
+                    color = Color(0xFFB3B3B3),
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            }
+
             Spacer(modifier = Modifier.height(12.dp))
 
             LazyColumn(
@@ -152,7 +189,7 @@ fun SearchScreen(
                 items(searchResults) { track ->
                     SearchResultRow(
                         track = track,
-                        onClick = { PlaybackManager.playTrack(track) }
+                        onClick = { PlaybackManager.playTrack(track, searchResults) }
                     )
                 }
             }
@@ -243,7 +280,7 @@ fun SearchResultRow(
                     modifier = Modifier.padding(end = 6.dp)
                 ) {
                     Text(
-                        text = "FLAC",
+                        text = if (track.youtubeVideoId.isNotBlank()) "YT" else "FLAC",
                         color = Color(0xFF1DB954),
                         fontSize = 8.sp,
                         fontWeight = FontWeight.Bold,
