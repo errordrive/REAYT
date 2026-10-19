@@ -30,8 +30,12 @@ import com.sp0.plus.model.SongsModel
 import com.sp0.plus.player.PlaybackManager
 import java.util.Calendar
 
+import androidx.compose.material.icons.filled.Settings
+
 @Composable
 fun HomeScreen(
+    onOpenSettings: () -> Unit = {},
+    onOpenProfile: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val greeting = when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
@@ -62,14 +66,34 @@ fun HomeScreen(
                     fontWeight = FontWeight.Bold
                 )
 
-                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    IconButton(onClick = {}) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onOpenSettings) {
                         Icon(
-                            painter = painterResource(R.drawable.ic_sp0plus_notification),
-                            contentDescription = "Notifications",
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Settings",
                             tint = Color.White,
-                            modifier = Modifier.size(22.dp)
+                            modifier = Modifier.size(24.dp)
                         )
+                    }
+
+                    IconButton(onClick = onOpenProfile) {
+                        Surface(
+                            shape = CircleShape,
+                            color = Color(0xFF1DB954),
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = "S",
+                                    color = Color.Black,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
                     }
                 }
             }

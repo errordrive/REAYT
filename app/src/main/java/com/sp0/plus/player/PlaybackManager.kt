@@ -69,8 +69,37 @@ object PlaybackManager {
     private val _activeLyricIndex = MutableStateFlow(0)
     val activeLyricIndex: StateFlow<Int> = _activeLyricIndex.asStateFlow()
 
+    private var sleepTimerJob: Job? = null
+    private val _sleepTimerSeconds = MutableStateFlow(0L)
+    val sleepTimerSeconds: StateFlow<Long> = _sleepTimerSeconds.asStateFlow()
+
     init {
         startProgressTracking()
+    }
+
+    fun setSleepTimer(minutes: Int) {
+        sleepTimerJob?.cancel()
+        if (minutes <= 0) {
+            _sleepTimerSeconds.value = 0L
+            return
+        }
+
+        val totalSecs = minutes * 60L
+        _sleepTimerSeconds.value = totalSecs
+
+        sleepTimerJob = scope.launch {
+            var remaining = totalSecs
+            while (remaining > 0 && isActive) {
+                delay(1000L)
+                remaining -= 1L
+                _sleepTimerSeconds.value = remaining
+            }
+            if (remaining <= 0) {
+                mediaController?.pause()
+                _isPlaying.value = false
+                _sleepTimerSeconds.value = 0L
+            }
+        }
     }
 
     fun attachMediaController(controller: MediaController) {

@@ -24,12 +24,15 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import com.sp0.plus.player.PlaybackManager
 import com.sp0.plus.ui.components.FullPlayerSheet
+import com.sp0.plus.ui.components.MediaOutputSheet
 import com.sp0.plus.ui.components.MiniPlayer
 import com.sp0.plus.ui.components.QueueSheet
 import com.sp0.plus.ui.notification.PlaybackService
 import com.sp0.plus.ui.screens.HomeScreen
 import com.sp0.plus.ui.screens.LibraryScreen
+import com.sp0.plus.ui.screens.ProfileScreen
 import com.sp0.plus.ui.screens.SearchScreen
+import com.sp0.plus.ui.screens.SettingsScreen
 import com.sp0.plus.ui.theme.Sp0PlusTheme
 
 class MainActivity : ComponentActivity() {
@@ -78,6 +81,9 @@ fun MainAppShell() {
     var selectedTab by remember { mutableStateOf(NavigationTab.HOME) }
     var isPlayerExpanded by remember { mutableStateOf(false) }
     var isQueueOpen by remember { mutableStateOf(false) }
+    var isMediaOutputOpen by remember { mutableStateOf(false) }
+    var isSettingsOpen by remember { mutableStateOf(false) }
+    var isProfileOpen by remember { mutableStateOf(false) }
 
     val currentTrack by PlaybackManager.currentTrack.collectAsState()
     val isPlaying by PlaybackManager.isPlaying.collectAsState()
@@ -94,9 +100,15 @@ fun MainAppShell() {
         Column(modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.weight(1f)) {
                 when (selectedTab) {
-                    NavigationTab.HOME -> HomeScreen()
+                    NavigationTab.HOME -> HomeScreen(
+                        onOpenSettings = { isSettingsOpen = true },
+                        onOpenProfile = { isProfileOpen = true }
+                    )
                     NavigationTab.SEARCH -> SearchScreen()
-                    NavigationTab.LIBRARY -> LibraryScreen()
+                    NavigationTab.LIBRARY -> LibraryScreen(
+                        onOpenProfile = { isProfileOpen = true },
+                        onOpenSettings = { isSettingsOpen = true }
+                    )
                 }
             }
 
@@ -113,7 +125,8 @@ fun MainAppShell() {
                         isPlaying = isPlaying,
                         progressMs = positionMs,
                         durationMs = durationMs,
-                        onExpand = { isPlayerExpanded = true }
+                        onExpand = { isPlayerExpanded = true },
+                        onOpenMediaOutput = { isMediaOutputOpen = true }
                     )
                 }
 
@@ -207,6 +220,48 @@ fun MainAppShell() {
             }
         }
 
+        // Settings Screen Overlay
+        AnimatedVisibility(
+            visible = isSettingsOpen,
+            enter = slideInHorizontally(initialOffsetX = { it }),
+            exit = slideOutHorizontally(targetOffsetX = { it })
+        ) {
+            SettingsScreen(
+                onBack = { isSettingsOpen = false },
+                onOpenProfile = {
+                    isSettingsOpen = false
+                    isProfileOpen = true
+                },
+                onOpenMediaOutput = { isMediaOutputOpen = true }
+            )
+        }
+
+        // Profile Screen Overlay
+        AnimatedVisibility(
+            visible = isProfileOpen,
+            enter = slideInHorizontally(initialOffsetX = { it }),
+            exit = slideOutHorizontally(targetOffsetX = { it })
+        ) {
+            ProfileScreen(
+                onBack = { isProfileOpen = false },
+                onOpenSettings = {
+                    isProfileOpen = false
+                    isSettingsOpen = true
+                }
+            )
+        }
+
+        // Media Output Devices Sheet Overlay
+        AnimatedVisibility(
+            visible = isMediaOutputOpen,
+            enter = slideInVertically(initialOffsetY = { it }),
+            exit = slideOutVertically(targetOffsetY = { it })
+        ) {
+            MediaOutputSheet(
+                onClose = { isMediaOutputOpen = false }
+            )
+        }
+
         // Full Screen Player Sheet Overlay
         AnimatedVisibility(
             visible = isPlayerExpanded && currentTrack != null,
@@ -220,7 +275,8 @@ fun MainAppShell() {
                     progressMs = positionMs,
                     durationMs = durationMs,
                     onCollapse = { isPlayerExpanded = false },
-                    onOpenQueue = { isQueueOpen = true }
+                    onOpenQueue = { isQueueOpen = true },
+                    onOpenMediaOutput = { isMediaOutputOpen = true }
                 )
             }
         }

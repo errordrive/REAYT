@@ -8,8 +8,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -39,6 +38,7 @@ fun FullPlayerSheet(
     durationMs: Long,
     onCollapse: () -> Unit,
     onOpenQueue: () -> Unit,
+    onOpenMediaOutput: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val isLiked by PlaybackManager.isLiked.collectAsState()
@@ -47,8 +47,11 @@ fun FullPlayerSheet(
     val audioQualityBadge by PlaybackManager.audioQualityBadge.collectAsState()
     val lyricsLines by PlaybackManager.lyricsLines.collectAsState()
     val activeLyricIndex by PlaybackManager.activeLyricIndex.collectAsState()
+    val sleepTimerSeconds by PlaybackManager.sleepTimerSeconds.collectAsState()
 
     var showFullLyrics by remember { mutableStateOf(false) }
+    var showOptionsMenu by remember { mutableStateOf(false) }
+    var showSleepTimerDialog by remember { mutableStateOf(false) }
     var isSeeking by remember { mutableStateOf(false) }
     var seekProgress by remember { mutableStateOf(0f) }
 
@@ -114,7 +117,7 @@ fun FullPlayerSheet(
                     )
                 }
 
-                IconButton(onClick = { /* options */ }) {
+                IconButton(onClick = { showOptionsMenu = true }) {
                     Icon(
                         painter = painterResource(R.drawable.ic_dots),
                         contentDescription = "Options",
@@ -178,12 +181,13 @@ fun FullPlayerSheet(
                 }
             }
 
-            // Audio Quality Badge
+            // Audio Quality & Sleep Timer Badges
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Surface(
                     shape = RoundedCornerShape(4.dp),
@@ -196,6 +200,23 @@ fun FullPlayerSheet(
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                     )
+                }
+
+                if (sleepTimerSeconds > 0) {
+                    val timerMins = sleepTimerSeconds / 60
+                    val timerSecs = sleepTimerSeconds % 60
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = Color(0xFFBA5D07).copy(alpha = 0.3f)
+                    ) {
+                        Text(
+                            text = "Timer: %02d:%02d".format(timerMins, timerSecs),
+                            color = Color(0xFFFFA726),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
                 }
             }
 
@@ -323,11 +344,11 @@ fun FullPlayerSheet(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = { /* device picker */ }) {
+                IconButton(onClick = onOpenMediaOutput) {
                     Icon(
                         painter = painterResource(R.drawable.ic_devices),
                         contentDescription = "Devices",
-                        tint = Color(0xFFB3B3B3),
+                        tint = Color(0xFF1DB954),
                         modifier = Modifier.size(22.dp)
                     )
                 }
@@ -462,6 +483,116 @@ fun FullPlayerSheet(
                     )
                 }
             }
+        }
+
+        // Track Options Bottom Sheet
+        if (showOptionsMenu) {
+            AlertDialog(
+                onDismissRequest = { showOptionsMenu = false },
+                title = {
+                    Text(text = track.title, color = Color.White, fontWeight = FontWeight.Bold)
+                },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(text = track.singer, color = Color(0xFFB3B3B3), fontSize = 13.sp)
+                        Divider(color = Color(0xFF333333))
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showOptionsMenu = false
+                                    showSleepTimerDialog = true
+                                }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(imageVector = Icons.Default.Timer, contentDescription = null, tint = Color.White)
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(text = "Sleep Timer", color = Color.White, fontSize = 15.sp)
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showOptionsMenu = false
+                                    onOpenMediaOutput()
+                                }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(imageVector = Icons.Default.Speaker, contentDescription = null, tint = Color.White)
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(text = "Audio Output Route", color = Color.White, fontSize = 15.sp)
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    PlaybackManager.toggleLike()
+                                    showOptionsMenu = false
+                                }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(imageVector = Icons.Default.Favorite, contentDescription = null, tint = if (isLiked) Color(0xFF1DB954) else Color.White)
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(text = if (isLiked) "Remove from Liked Songs" else "Add to Liked Songs", color = Color.White, fontSize = 15.sp)
+                        }
+                    }
+                },
+                confirmButton = {},
+                dismissButton = {
+                    TextButton(onClick = { showOptionsMenu = false }) {
+                        Text("Close", color = Color(0xFF1DB954))
+                    }
+                },
+                containerColor = Color(0xFF242424)
+            )
+        }
+
+        // Sleep Timer Selection Dialog
+        if (showSleepTimerDialog) {
+            val timerOptions = listOf(
+                "Turn off timer" to 0,
+                "15 minutes" to 15,
+                "30 minutes" to 30,
+                "45 minutes" to 45,
+                "1 hour" to 60
+            )
+
+            AlertDialog(
+                onDismissRequest = { showSleepTimerDialog = false },
+                title = { Text("Set Sleep Timer", color = Color.White) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        timerOptions.forEach { (label, mins) ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        PlaybackManager.setSleepTimer(mins)
+                                        showSleepTimerDialog = false
+                                    }
+                                    .padding(vertical = 10.dp, horizontal = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(text = label, color = Color.White, fontSize = 15.sp)
+                            }
+                        }
+                    }
+                },
+                confirmButton = {},
+                dismissButton = {
+                    TextButton(onClick = { showSleepTimerDialog = false }) {
+                        Text("Cancel", color = Color(0xFF1DB954))
+                    }
+                },
+                containerColor = Color(0xFF282828)
+            )
         }
     }
 }

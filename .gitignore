@@ -30,4 +30,5 @@ local.properties
 # Scratch and outputs
 build_output/
 .agents/
+.gemini/
 decrypt_strings.py

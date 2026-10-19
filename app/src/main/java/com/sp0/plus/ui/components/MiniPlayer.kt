@@ -32,6 +32,7 @@ fun MiniPlayer(
     progressMs: Long,
     durationMs: Long,
     onExpand: () -> Unit,
+    onOpenMediaOutput: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val isLiked by PlaybackManager.isLiked.collectAsState()
@@ -103,6 +104,19 @@ fun MiniPlayer(
                         fontSize = 8.sp,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                    )
+                }
+
+                // Device Output Button
+                IconButton(
+                    onClick = onOpenMediaOutput,
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_devices),
+                        contentDescription = "Output Route",
+                        tint = Color(0xFF1DB954),
+                        modifier = Modifier.size(18.dp)
                     )
                 }
 

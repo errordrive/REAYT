@@ -27,8 +27,12 @@ import com.sp0.plus.data.MusicRepository
 import com.sp0.plus.model.SongsModel
 import com.sp0.plus.player.PlaybackManager
 
+import androidx.compose.material.icons.filled.Settings
+
 @Composable
 fun LibraryScreen(
+    onOpenProfile: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var selectedFilter by remember { mutableStateOf("All") }
@@ -48,13 +52,16 @@ fun LibraryScreen(
     ) {
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Header: "Your Library", Search, Add
+        // Header: "Your Library", Settings, Add
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.clickable { onOpenProfile() }
+            ) {
                 Surface(
                     shape = CircleShape,
                     color = Color(0xFF1DB954),
@@ -79,6 +86,15 @@ fun LibraryScreen(
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                IconButton(onClick = onOpenSettings) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "Settings",
+                        tint = Color.White,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+
                 IconButton(onClick = {}) {
                     Icon(
                         painter = painterResource(R.drawable.ic_add),
