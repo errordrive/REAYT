@@ -50,7 +50,13 @@ object NetworkModule {
 
     private val adblockDns = object : Dns {
         override fun lookup(hostname: String): List<InetAddress> {
-            if (!SettingsManager.adblockDnsEnabled.value) return Dns.SYSTEM.lookup(hostname)
+            if (!SettingsManager.adblockDnsEnabled.value ||
+                hostname.contains("googlevideo.com") ||
+                hostname.contains("youtube.com") ||
+                hostname.contains("ytimg.com")
+            ) {
+                return Dns.SYSTEM.lookup(hostname)
+            }
             return try {
                 dohDns.lookup(hostname)
             } catch (_: Throwable) {

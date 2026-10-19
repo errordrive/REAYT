@@ -275,15 +275,23 @@ object PlaybackManager {
             }
 
             // 2. Controller execution fallback
-            mediaController?.let { controller ->
-                try {
-                    controller.setMediaItem(mediaItem)
-                    controller.prepare()
-                    controller.play()
-                    _isPlaying.value = true
-                } catch (e: Throwable) {
-                    android.util.Log.e("PlaybackManager", "mediaController play failed", e)
-                    _streamError.value = "Playback engine failed: ${e.message}"
+            if (mediaController != null) {
+                mediaController?.let { controller ->
+                    try {
+                        controller.setMediaItem(mediaItem)
+                        controller.prepare()
+                        controller.play()
+                        _isPlaying.value = true
+                    } catch (e: Throwable) {
+                        android.util.Log.e("PlaybackManager", "mediaController play failed", e)
+                        _streamError.value = "Playback engine failed: ${e.message}"
+                    }
+                }
+            } else if (srv == null) {
+                // If neither service nor controller is connected yet, retry once after short delay
+                scope.launch {
+                    delay(400L)
+                    executePlayback(track, streamUrl)
                 }
             }
         } catch (e: Throwable) {

@@ -86,8 +86,7 @@ object MusicRepository {
                             id = "p_lossless",
                             title = "Lossless Master Hits",
                             description = "Studio master quality tracks streaming dynamically from YouTube Music.",
-                            coverUrl = lossless.firstOrNull()?.coverUri?.ifBlank { null }
-                                ?: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80",
+                            coverUrl = lossless.firstOrNull()?.coverUri.orEmpty(),
                             tracks = lossless
                         )
                     )
@@ -98,8 +97,7 @@ object MusicRepository {
                             id = "p_global",
                             title = "Today's Global Top Hits",
                             description = "The hottest world-charting songs streaming live in studio quality.",
-                            coverUrl = trending.firstOrNull()?.coverUri?.ifBlank { null }
-                                ?: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=600&auto=format&fit=crop&q=80",
+                            coverUrl = trending.firstOrNull()?.coverUri.orEmpty(),
                             tracks = trending
                         )
                     )
@@ -110,8 +108,7 @@ object MusicRepository {
                             id = "p_chill",
                             title = "Late Night Vibes & Lo-Fi",
                             description = "Mellow acoustic hits, calm sessions, and synchronized lyrics.",
-                            coverUrl = chill.firstOrNull()?.coverUri?.ifBlank { null }
-                                ?: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600&auto=format&fit=crop&q=80",
+                            coverUrl = chill.firstOrNull()?.coverUri.orEmpty(),
                             tracks = chill
                         )
                     )

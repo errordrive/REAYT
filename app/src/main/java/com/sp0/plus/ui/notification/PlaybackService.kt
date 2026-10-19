@@ -18,6 +18,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.sp0.plus.data.NetworkModule
 import androidx.media3.session.CommandButton
+import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionCommand
@@ -87,10 +88,22 @@ class PlaybackService : MediaSessionService() {
             .setSessionActivity(sessionActivityPendingIntent)
             .setCallback(CustomMediaSessionCallback())
             .build()
+
+        try {
+            setMediaNotificationProvider(
+                DefaultMediaNotificationProvider.Builder(this)
+                    .setChannelId(CHANNEL_ID)
+                    .setSmallIcon(R.drawable.ic_sp0plus_notification)
+                    .build()
+            )
+        } catch (e: Throwable) {
+            android.util.Log.w("PlaybackService", "Failed to set custom notification provider: ${e.message}")
+        }
     }
 
     fun playMediaItem(item: MediaItem) {
-        player?.let { p ->
+        val p = player ?: return
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
             try {
                 if (item.localConfiguration?.uri != null) {
                     p.setMediaItem(item)

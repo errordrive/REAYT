@@ -149,7 +149,7 @@ fun MiniPlayer(
 
             // Bottom Progress Line
             LinearProgressIndicator(
-                progress = { progressFraction },
+                progress = progressFraction,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(2.dp),

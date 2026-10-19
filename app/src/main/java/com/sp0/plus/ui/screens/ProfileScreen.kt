@@ -39,6 +39,8 @@ fun ProfileScreen(
     val userEmail by SettingsManager.userEmail.collectAsState()
     val accountTier by SettingsManager.accountTier.collectAsState()
     val realTimeTracks by MusicRepository.realTimeTracks.collectAsState()
+    val curatedPlaylists by MusicRepository.curatedPlaylists.collectAsState()
+    val likedTracks = remember(realTimeTracks) { realTimeTracks.filter { it.isLiked } }
 
     var showEditProfileDialog by remember { mutableStateOf(false) }
     var editName by remember { mutableStateOf(userName) }
@@ -184,58 +186,61 @@ fun ProfileScreen(
                             .padding(vertical = 16.dp),
                         horizontalArrangement = Arrangement.SpaceEvenly
                     ) {
-                        ProfileStatItem(title = "PLAYLISTS", value = "14")
+                        ProfileStatItem(title = "PLAYLISTS", value = curatedPlaylists.size.coerceAtLeast(1).toString())
                         Divider(modifier = Modifier.height(36.dp).width(1.dp), color = Color(0xFF333333))
-                        ProfileStatItem(title = "LIKED SONGS", value = "182")
+                        ProfileStatItem(title = "LIKED SONGS", value = likedTracks.size.toString())
                         Divider(modifier = Modifier.height(36.dp).width(1.dp), color = Color(0xFF333333))
-                        ProfileStatItem(title = "STREAM HOURS", value = "96h")
+                        ProfileStatItem(title = "QUALITY", value = "FLAC")
                     }
                 }
 
-                // Top Artists Section
-                item {
-                    Column {
-                        Text(
-                            text = "Top Artists This Month",
-                            color = Color.White,
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                // Top Artists Section (dynamically computed from real fetched songs)
+                val topArtists = remember(realTimeTracks) {
+                    realTimeTracks
+                        .filter { it.singer.isNotBlank() }
+                        .distinctBy { it.singer }
+                        .take(6)
+                }
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                if (topArtists.isNotEmpty()) {
+                    item {
+                        Column {
+                            Text(
+                                text = "Top Artists This Month",
+                                color = Color.White,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold
+                            )
 
-                        val topArtists = listOf(
-                            "The Weeknd" to "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=300",
-                            "Taylor Swift" to "https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?w=300",
-                            "Lady Gaga" to "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300",
-                            "Arijit Singh" to "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300",
-                            "Bruno Mars" to "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=300"
-                        )
+                            Spacer(modifier = Modifier.height(12.dp))
 
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            items(topArtists) { (artistName, img) ->
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    AsyncImage(
-                                        model = img,
-                                        contentDescription = artistName,
-                                        modifier = Modifier
-                                            .size(80.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(0xFF282828)),
-                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
-                                    )
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text(
-                                        text = artistName,
-                                        color = Color.White,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Text(
-                                        text = "Artist",
-                                        color = Color(0xFF888888),
-                                        fontSize = 11.sp
-                                    )
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                items(topArtists) { artistTrack ->
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        AsyncImage(
+                                            model = artistTrack.coverUri.ifEmpty { R.drawable.logo },
+                                            contentDescription = artistTrack.singer,
+                                            modifier = Modifier
+                                                .size(80.dp)
+                                                .clip(CircleShape)
+                                                .background(Color(0xFF282828)),
+                                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(
+                                            text = artistTrack.singer,
+                                            color = Color.White,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = "Artist",
+                                            color = Color(0xFF888888),
+                                            fontSize = 11.sp
+                                        )
+                                    }
                                 }
                             }
                         }
