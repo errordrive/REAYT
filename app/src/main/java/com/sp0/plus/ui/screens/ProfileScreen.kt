@@ -32,6 +32,7 @@ import com.sp0.plus.player.PlaybackManager
 fun ProfileScreen(
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
+    onLogout: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val userName by SettingsManager.userName.collectAsState()
@@ -172,7 +173,7 @@ fun ProfileScreen(
                     }
                 }
 
-                // Stats Counters
+                // Stats Counters (Music Library Metrics)
                 item {
                     Row(
                         modifier = Modifier
@@ -184,9 +185,9 @@ fun ProfileScreen(
                     ) {
                         ProfileStatItem(title = "PLAYLISTS", value = "14")
                         Divider(modifier = Modifier.height(36.dp).width(1.dp), color = Color(0xFF333333))
-                        ProfileStatItem(title = "FOLLOWERS", value = "128")
+                        ProfileStatItem(title = "LIKED SONGS", value = "182")
                         Divider(modifier = Modifier.height(36.dp).width(1.dp), color = Color(0xFF333333))
-                        ProfileStatItem(title = "FOLLOWING", value = "42")
+                        ProfileStatItem(title = "STREAM HOURS", value = "96h")
                     }
                 }
 
@@ -388,15 +389,16 @@ fun ProfileScreen(
                 title = { Text(text = "Log out of Sp0+?", color = Color.White) },
                 text = {
                     Text(
-                        text = "You will be switched to Guest Mode with offline listening capability.",
+                        text = "You will be logged out of your account and returned to the login screen.",
                         color = Color(0xFFB3B3B3)
                     )
                 },
                 confirmButton = {
                     Button(
                         onClick = {
-                            SettingsManager.updateProfile("Guest User", "guest@sp0plus.local")
+                            SettingsManager.logout()
                             showLogoutDialog = false
+                            onLogout()
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE91429))
                     ) {

@@ -22,6 +22,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
+import com.sp0.plus.data.SettingsManager
 import com.sp0.plus.player.PlaybackManager
 import com.sp0.plus.ui.components.FullPlayerSheet
 import com.sp0.plus.ui.components.MediaOutputSheet
@@ -30,6 +31,7 @@ import com.sp0.plus.ui.components.QueueSheet
 import com.sp0.plus.ui.notification.PlaybackService
 import com.sp0.plus.ui.screens.HomeScreen
 import com.sp0.plus.ui.screens.LibraryScreen
+import com.sp0.plus.ui.screens.LoginScreen
 import com.sp0.plus.ui.screens.ProfileScreen
 import com.sp0.plus.ui.screens.SearchScreen
 import com.sp0.plus.ui.screens.SettingsScreen
@@ -78,6 +80,17 @@ enum class NavigationTab {
 
 @Composable
 fun MainAppShell() {
+    val isLoggedIn by SettingsManager.isLoggedIn.collectAsState()
+
+    if (!isLoggedIn) {
+        LoginScreen(
+            onLoginSuccess = {
+                // user logged in, state triggers recomposition
+            }
+        )
+        return
+    }
+
     var selectedTab by remember { mutableStateOf(NavigationTab.HOME) }
     var isPlayerExpanded by remember { mutableStateOf(false) }
     var isQueueOpen by remember { mutableStateOf(false) }
@@ -232,7 +245,11 @@ fun MainAppShell() {
                     isSettingsOpen = false
                     isProfileOpen = true
                 },
-                onOpenMediaOutput = { isMediaOutputOpen = true }
+                onOpenMediaOutput = { isMediaOutputOpen = true },
+                onLogout = {
+                    isSettingsOpen = false
+                    isProfileOpen = false
+                }
             )
         }
 
@@ -247,6 +264,10 @@ fun MainAppShell() {
                 onOpenSettings = {
                     isProfileOpen = false
                     isSettingsOpen = true
+                },
+                onLogout = {
+                    isProfileOpen = false
+                    isSettingsOpen = false
                 }
             )
         }

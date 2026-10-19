@@ -29,6 +29,7 @@ import com.sp0.plus.player.PlaybackManager
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
+import com.sp0.plus.data.SettingsManager
 
 @Composable
 fun LibraryScreen(
@@ -36,6 +37,7 @@ fun LibraryScreen(
     onOpenSettings: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val userName by SettingsManager.userName.collectAsState()
     var selectedFilter by remember { mutableStateOf("All") }
     var isGridView by remember { mutableStateOf(false) }
 
@@ -70,7 +72,7 @@ fun LibraryScreen(
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Text(
-                            text = "S",
+                            text = userName.take(1).uppercase(),
                             color = Color.Black,
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp

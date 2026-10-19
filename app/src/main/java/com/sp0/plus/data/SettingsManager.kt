@@ -51,11 +51,25 @@ object SettingsManager {
     private val _accountTier = MutableStateFlow("Sp0+ Lossless VIP (Permanent)")
     val accountTier: StateFlow<String> = _accountTier.asStateFlow()
 
+    private val _isLoggedIn = MutableStateFlow(true)
+    val isLoggedIn: StateFlow<Boolean> = _isLoggedIn.asStateFlow()
+
+    private val _equalizerPreset = MutableStateFlow("Flat (Lossless)")
+    val equalizerPreset: StateFlow<String> = _equalizerPreset.asStateFlow()
+
+    private val _bassBoostEnabled = MutableStateFlow(true)
+    val bassBoostEnabled: StateFlow<Boolean> = _bassBoostEnabled.asStateFlow()
+
+    private val _amoledMode = MutableStateFlow(true)
+    val amoledMode: StateFlow<Boolean> = _amoledMode.asStateFlow()
+
     private val _cacheSizeFormatted = MutableStateFlow("Calculating...")
     val cacheSizeFormatted: StateFlow<String> = _cacheSizeFormatted.asStateFlow()
 
     fun init(context: Context) {
         prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+        _isLoggedIn.value = prefs.getBoolean("is_logged_in", true)
 
         val wifiQ = prefs.getString("wifi_quality", AudioQuality.LOSSLESS.name)
         _wifiQuality.value = try { AudioQuality.valueOf(wifiQ ?: AudioQuality.LOSSLESS.name) } catch (_: Exception) { AudioQuality.LOSSLESS }
@@ -69,6 +83,9 @@ object SettingsManager {
         _normalizeVolume.value = prefs.getBoolean("normalize_volume", true)
         _automix.value = prefs.getBoolean("automix", true)
         _autoBackup.value = prefs.getBoolean("auto_backup", true)
+        _equalizerPreset.value = prefs.getString("equalizer_preset", "Flat (Lossless)") ?: "Flat (Lossless)"
+        _bassBoostEnabled.value = prefs.getBoolean("bass_boost_enabled", true)
+        _amoledMode.value = prefs.getBoolean("amoled_mode", true)
         _userName.value = prefs.getString("user_name", "Sp0+ Master") ?: "Sp0+ Master"
         _userEmail.value = prefs.getString("user_email", "master@sp0plus.app") ?: "master@sp0plus.app"
         _accountTier.value = prefs.getString("account_tier", "Sp0+ Lossless VIP (Permanent)") ?: "Sp0+ Lossless VIP (Permanent)"
@@ -114,6 +131,47 @@ object SettingsManager {
     fun setAutoBackup(enabled: Boolean) {
         _autoBackup.value = enabled
         prefs.edit().putBoolean("auto_backup", enabled).apply()
+    }
+
+    fun setEqualizerPreset(preset: String) {
+        _equalizerPreset.value = preset
+        prefs.edit().putString("equalizer_preset", preset).apply()
+    }
+
+    fun setBassBoostEnabled(enabled: Boolean) {
+        _bassBoostEnabled.value = enabled
+        prefs.edit().putBoolean("bass_boost_enabled", enabled).apply()
+    }
+
+    fun setAmoledMode(enabled: Boolean) {
+        _amoledMode.value = enabled
+        prefs.edit().putBoolean("amoled_mode", enabled).apply()
+    }
+
+    fun login(username: String, email: String, tier: String = "Sp0+ Lossless VIP (Permanent)") {
+        _isLoggedIn.value = true
+        _userName.value = username
+        _userEmail.value = email
+        _accountTier.value = tier
+        prefs.edit()
+            .putBoolean("is_logged_in", true)
+            .putString("user_name", username)
+            .putString("user_email", email)
+            .putString("account_tier", tier)
+            .apply()
+    }
+
+    fun logout() {
+        _isLoggedIn.value = false
+        _userName.value = "Guest User"
+        _userEmail.value = "guest@sp0plus.app"
+        _accountTier.value = "Free Tier"
+        prefs.edit()
+            .putBoolean("is_logged_in", false)
+            .putString("user_name", "Guest User")
+            .putString("user_email", "guest@sp0plus.app")
+            .putString("account_tier", "Free Tier")
+            .apply()
     }
 
     fun updateProfile(name: String, email: String) {

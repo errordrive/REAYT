@@ -12,6 +12,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -26,6 +28,7 @@ import coil.compose.AsyncImage
 import com.sp0.plus.R
 import com.sp0.plus.data.MusicRepository
 import com.sp0.plus.data.Playlist
+import com.sp0.plus.data.SettingsManager
 import com.sp0.plus.model.SongsModel
 import com.sp0.plus.player.PlaybackManager
 import java.util.Calendar
@@ -38,6 +41,8 @@ fun HomeScreen(
     onOpenProfile: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val userName by SettingsManager.userName.collectAsState()
+
     val greeting = when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
         in 5..11 -> "Good morning"
         in 12..17 -> "Good afternoon"
@@ -87,7 +92,7 @@ fun HomeScreen(
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Text(
-                                    text = "S",
+                                    text = userName.take(1).uppercase(),
                                     color = Color.Black,
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Bold

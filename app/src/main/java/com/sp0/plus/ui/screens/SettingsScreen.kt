@@ -29,6 +29,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenProfile: () -> Unit,
     onOpenMediaOutput: () -> Unit,
+    onLogout: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -41,13 +42,18 @@ fun SettingsScreen(
     val normalizeVolume by SettingsManager.normalizeVolume.collectAsState()
     val automix by SettingsManager.automix.collectAsState()
     val autoBackup by SettingsManager.autoBackup.collectAsState()
+    val equalizerPreset by SettingsManager.equalizerPreset.collectAsState()
+    val bassBoostEnabled by SettingsManager.bassBoostEnabled.collectAsState()
+    val amoledMode by SettingsManager.amoledMode.collectAsState()
     val userName by SettingsManager.userName.collectAsState()
     val userEmail by SettingsManager.userEmail.collectAsState()
     val accountTier by SettingsManager.accountTier.collectAsState()
     val cacheSize by SettingsManager.cacheSizeFormatted.collectAsState()
 
     var showQualityDialogFor by remember { mutableStateOf<String?>(null) }
+    var showEqualizerDialog by remember { mutableStateOf(false) }
     var showClearCacheDialog by remember { mutableStateOf(false) }
+    var showLogoutDialog by remember { mutableStateOf(false) }
 
     Surface(
         modifier = modifier
@@ -95,61 +101,69 @@ fun SettingsScreen(
                 // Account Section
                 item {
                     SettingsSectionTitle("ACCOUNT")
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = Color(0xFF242424),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable { onOpenProfile() }
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                    SettingsCard {
+                        Surface(
+                            color = Color.Transparent,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onOpenProfile() }
                         ) {
-                            Surface(
-                                shape = CircleShape,
-                                color = Color(0xFF1DB954),
-                                modifier = Modifier.size(52.dp)
+                            Row(
+                                modifier = Modifier.padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Box(contentAlignment = Alignment.Center) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color(0xFF1DB954),
+                                    modifier = Modifier.size(52.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(
+                                            text = userName.take(1).uppercase(),
+                                            color = Color.Black,
+                                            fontSize = 22.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.width(16.dp))
+
+                                Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = userName.take(1).uppercase(),
-                                        color = Color.Black,
-                                        fontSize = 22.sp,
+                                        text = userName,
+                                        color = Color.White,
+                                        fontSize = 16.sp,
                                         fontWeight = FontWeight.Bold
                                     )
+                                    Text(
+                                        text = accountTier,
+                                        color = Color(0xFF1DB954),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Text(
+                                        text = userEmail,
+                                        color = Color(0xFF888888),
+                                        fontSize = 11.sp
+                                    )
                                 }
-                            }
 
-                            Spacer(modifier = Modifier.width(16.dp))
-
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = userName,
-                                    color = Color.White,
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = accountTier,
-                                    color = Color(0xFF1DB954),
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
-                                Text(
-                                    text = userEmail,
-                                    color = Color(0xFF888888),
-                                    fontSize = 11.sp
+                                Icon(
+                                    imageVector = Icons.Default.ChevronRight,
+                                    contentDescription = null,
+                                    tint = Color(0xFF888888)
                                 )
                             }
-
-                            Icon(
-                                imageVector = Icons.Default.ChevronRight,
-                                contentDescription = null,
-                                tint = Color(0xFF888888)
-                            )
                         }
+
+                        Divider(color = Color(0xFF333333))
+
+                        SettingsClickableRow(
+                            title = "Log Out",
+                            subtitle = "Signed in as $userName • Tap to switch account",
+                            onClick = { showLogoutDialog = true }
+                        )
                     }
                 }
 
@@ -176,8 +190,8 @@ fun SettingsScreen(
 
                         SettingsClickableRow(
                             title = "Equalizer & Sound Effects",
-                            subtitle = "Lossless Hi-Res Audio Engine",
-                            onClick = {}
+                            subtitle = "$equalizerPreset • ${if (bassBoostEnabled) "Bass Boost ON" else "Bass Boost OFF"}",
+                            onClick = { showEqualizerDialog = true }
                         )
                     }
                 }
@@ -260,6 +274,20 @@ fun SettingsScreen(
                             title = "Audio output devices",
                             subtitle = "Select audio route or speaker",
                             onClick = onOpenMediaOutput
+                        )
+                    }
+                }
+
+                // Display & Theme Section
+                item {
+                    SettingsSectionTitle("DISPLAY & THEME")
+
+                    SettingsCard {
+                        SettingsSwitchRow(
+                            title = "Pure AMOLED Black",
+                            subtitle = "Optimize UI for OLED displays and battery savings",
+                            checked = amoledMode,
+                            onCheckedChange = { SettingsManager.setAmoledMode(it) }
                         )
                     }
                 }
@@ -445,6 +473,128 @@ fun SettingsScreen(
                 },
                 dismissButton = {
                     TextButton(onClick = { showClearCacheDialog = false }) {
+                        Text("Cancel", color = Color.White)
+                    }
+                },
+                containerColor = Color(0xFF282828)
+            )
+        }
+
+        // Equalizer & Sound Effects Dialog
+        if (showEqualizerDialog) {
+            val presets = listOf(
+                "Flat (Lossless)" to "Natural, unmodified bit-perfect audio reproduction",
+                "Bass Boost" to "Enhanced low frequencies for hip-hop and electronic",
+                "Vocal Booster" to "Crisp, elevated midrange for podcasts and acoustic",
+                "Electronic / EDM" to "Dynamic treble and punchy sub-bass",
+                "Rock & Metal" to "Aggressive guitar drive and energetic rhythm",
+                "Acoustic" to "Warm and balanced organic instrument profile"
+            )
+
+            AlertDialog(
+                onDismissRequest = { showEqualizerDialog = false },
+                title = { Text(text = "Equalizer & Sound Effects", color = Color.White) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFF1E1E1E))
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(text = "Dynamic Bass Boost", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Text(text = "Deep low-end harmonic saturation", color = Color(0xFF888888), fontSize = 11.sp)
+                            }
+                            Switch(
+                                checked = bassBoostEnabled,
+                                onCheckedChange = { SettingsManager.setBassBoostEnabled(it) },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White,
+                                    checkedTrackColor = Color(0xFF1DB954)
+                                )
+                            )
+                        }
+
+                        Divider(color = Color(0xFF333333))
+
+                        Text(text = "SOUND PRESETS", color = Color(0xFF888888), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            presets.forEach { (presetName, desc) ->
+                                val isSelected = equalizerPreset == presetName
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable { SettingsManager.setEqualizerPreset(presetName) }
+                                        .background(if (isSelected) Color(0xFF1DB954).copy(alpha = 0.15f) else Color.Transparent)
+                                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = presetName,
+                                            color = if (isSelected) Color(0xFF1DB954) else Color.White,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                            fontSize = 13.sp
+                                        )
+                                        Text(text = desc, color = Color(0xFF888888), fontSize = 10.sp)
+                                    }
+                                    if (isSelected) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            tint = Color(0xFF1DB954),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = { showEqualizerDialog = false },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1DB954))
+                    ) {
+                        Text("Done", color = Color.Black)
+                    }
+                },
+                containerColor = Color(0xFF282828)
+            )
+        }
+
+        // Logout Confirmation Dialog
+        if (showLogoutDialog) {
+            AlertDialog(
+                onDismissRequest = { showLogoutDialog = false },
+                title = { Text(text = "Log out of Sp0+?", color = Color.White) },
+                text = {
+                    Text(
+                        text = "You will be signed out and returned to the login screen.",
+                        color = Color(0xFFB3B3B3)
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            SettingsManager.logout()
+                            showLogoutDialog = false
+                            onLogout()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE91429))
+                    ) {
+                        Text("Log Out", color = Color.White)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showLogoutDialog = false }) {
                         Text("Cancel", color = Color.White)
                     }
                 },
