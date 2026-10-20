@@ -8,6 +8,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -24,12 +26,11 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.sp0.plus.R
 import com.sp0.plus.data.MusicRepository
+import com.sp0.plus.data.SettingsManager
+import com.sp0.plus.data.UserPlaylist
+import com.sp0.plus.data.UserPlaylistManager
 import com.sp0.plus.model.SongsModel
 import com.sp0.plus.player.PlaybackManager
-
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Settings
-import com.sp0.plus.data.SettingsManager
 
 @Composable
 fun LibraryScreen(
@@ -38,231 +39,543 @@ fun LibraryScreen(
     modifier: Modifier = Modifier
 ) {
     val userName by SettingsManager.userName.collectAsState()
+    val allTracks by MusicRepository.realTimeTracks.collectAsState()
+    val userPlaylists by UserPlaylistManager.playlists.collectAsState()
+
     var selectedFilter by remember { mutableStateOf("All") }
-    var isGridView by remember { mutableStateOf(false) }
+    var selectedPlaylistId by remember { mutableStateOf<String?>(null) }
+    var showCreatePlaylistDialog by remember { mutableStateOf(false) }
+    var newPlaylistName by remember { mutableStateOf("") }
 
     val filterChips = listOf("All", "Playlists", "Artists", "Albums", "Downloaded")
-
-    val allTracks by MusicRepository.realTimeTracks.collectAsState()
     val likedTracks = allTracks.filter { it.isLiked }
 
-    Column(
+    val selectedPlaylist = userPlaylists.firstOrNull { it.id == selectedPlaylistId }
+
+    Box(
         modifier = modifier
             .fillMaxSize()
             .background(Color(0xFF121212))
             .statusBarsPadding()
-            .padding(horizontal = 16.dp)
     ) {
-        Spacer(modifier = Modifier.height(16.dp))
+        if (selectedPlaylist != null) {
+            // Step 3 — Playlist detail view
+            val playlistTracks: List<SongsModel> = selectedPlaylist.trackIds.map { vid ->
+                UserPlaylistManager.getTrack(vid)
+                    ?: allTracks.firstOrNull { it.youtubeVideoId == vid || it.id == vid }
+                    ?: SongsModel(
+                        id = vid,
+                        title = "Song ($vid)",
+                        singer = "Unknown Artist",
+                        youtubeVideoId = vid
+                    )
+            }
 
-        // Header: "Your Library", Settings, Add
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.clickable { onOpenProfile() }
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp)
             ) {
-                Surface(
-                    shape = CircleShape,
-                    color = Color(0xFF1DB954),
-                    modifier = Modifier.size(32.dp)
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Detail Top Bar
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            text = userName.take(1).uppercase(),
-                            color = Color.Black,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp
+                    IconButton(onClick = { selectedPlaylistId = null }) {
+                        Icon(
+                            imageVector = Icons.Default.ArrowBack,
+                            contentDescription = "Back",
+                            tint = Color.White
+                        )
+                    }
+
+                    Text(
+                        text = selectedPlaylist.name,
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 8.dp)
+                    )
+
+                    IconButton(onClick = {
+                        UserPlaylistManager.delete(selectedPlaylist.id)
+                        selectedPlaylistId = null
+                    }) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Delete Playlist",
+                            tint = Color(0xFFE91429)
                         )
                     }
                 }
-                Spacer(modifier = Modifier.width(12.dp))
-                Text(
-                    text = "Your Library",
-                    color = Color.White,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                IconButton(onClick = onOpenSettings) {
-                    Icon(
-                        imageVector = Icons.Default.Settings,
-                        contentDescription = "Settings",
-                        tint = Color.White,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
+                Spacer(modifier = Modifier.height(16.dp))
 
-                IconButton(onClick = {}) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_add),
-                        contentDescription = "Add",
-                        tint = Color.White,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Filter Chips Row
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            items(filterChips) { filter ->
-                val isSelected = filter == selectedFilter
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = if (isSelected) Color.White else Color(0xFF282828),
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(20.dp))
-                        .clickable { selectedFilter = filter }
-                ) {
-                    Text(
-                        text = filter,
-                        color = if (isSelected) Color.Black else Color.White,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Sort & Grid/List view toggle
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "Most Recent",
-                color = Color.White,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold
-            )
-
-            IconButton(
-                onClick = { isGridView = !isGridView },
-                modifier = Modifier.size(28.dp)
-            ) {
-                Icon(
-                    painter = painterResource(if (isGridView) R.drawable.ic_view_list else R.drawable.ic_view_grid),
-                    contentDescription = "View Toggle",
-                    tint = Color.White,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        LazyColumn(
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = PaddingValues(bottom = 90.dp),
-            modifier = Modifier.fillMaxSize()
-        ) {
-            // Liked Songs Pinned Item
-            item {
+                // Playlist Hero Row
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable {
-                            if (likedTracks.isNotEmpty()) {
-                                PlaybackManager.playTrack(likedTracks.first(), likedTracks)
-                            }
-                        }
-                        .padding(vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(60.dp)
-                            .clip(RoundedCornerShape(6.dp))
+                            .size(72.dp)
+                            .clip(RoundedCornerShape(8.dp))
                             .background(
                                 Brush.linearGradient(
-                                    colors = listOf(Color(0xFF450AF5), Color(0xFFC4EFD9))
+                                    listOf(Color(0xFF1DB954), Color(0xFF0F5A29))
                                 )
                             ),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            painter = painterResource(R.drawable.added),
-                            contentDescription = "Liked Songs",
+                            imageVector = Icons.Default.QueueMusic,
+                            contentDescription = null,
                             tint = Color.White,
-                            modifier = Modifier.size(28.dp)
+                            modifier = Modifier.size(36.dp)
                         )
                     }
 
-                    Spacer(modifier = Modifier.width(14.dp))
-
-                    Column {
-                        Text(
-                            text = "Liked Songs",
-                            color = Color.White,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            text = "Playlist • ${likedTracks.size} songs",
-                            color = Color(0xFFB3B3B3),
-                            fontSize = 12.sp
-                        )
-                    }
-                }
-            }
-
-            // Other Library Playlists & Tracks
-            items(allTracks) { track ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable { PlaybackManager.playTrack(track) }
-                        .padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    AsyncImage(
-                        model = track.coverUri.ifEmpty { R.drawable.logo },
-                        contentDescription = null,
-                        modifier = Modifier
-                            .size(60.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(Color(0xFF282828)),
-                        contentScale = ContentScale.Crop
-                    )
-
-                    Spacer(modifier = Modifier.width(14.dp))
+                    Spacer(modifier = Modifier.width(16.dp))
 
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = track.title,
-                            color = Color.White,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            text = "${playlistTracks.size} songs",
+                            color = Color(0xFFB3B3B3),
+                            fontSize = 13.sp
                         )
                         Text(
-                            text = "Song • ${track.singer}",
-                            color = Color(0xFFB3B3B3),
-                            fontSize = 12.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            text = "Created by you",
+                            color = Color(0xFF888888),
+                            fontSize = 11.sp
                         )
+                    }
+
+                    if (playlistTracks.isNotEmpty()) {
+                        IconButton(
+                            onClick = {
+                                PlaybackManager.playTrack(playlistTracks.first(), playlistTracks)
+                            },
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF1DB954))
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = "Play",
+                                tint = Color.Black,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                if (playlistTracks.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "No songs added yet.\nTap options on any song to add it here.",
+                            color = Color(0xFF888888),
+                            fontSize = 14.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        contentPadding = PaddingValues(bottom = 90.dp),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        items(playlistTracks) { track ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { PlaybackManager.playTrack(track, playlistTracks) }
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                AsyncImage(
+                                    model = track.coverUri.ifEmpty { R.drawable.logo },
+                                    contentDescription = null,
+                                    modifier = Modifier
+                                        .size(52.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(Color(0xFF282828)),
+                                    contentScale = ContentScale.Crop
+                                )
+
+                                Spacer(modifier = Modifier.width(12.dp))
+
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = track.title,
+                                        color = Color.White,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = track.singer,
+                                        color = Color(0xFFB3B3B3),
+                                        fontSize = 12.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+
+                                IconButton(onClick = {
+                                    UserPlaylistManager.removeTrack(selectedPlaylist.id, track.youtubeVideoId.ifBlank { track.id })
+                                }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Remove",
+                                        tint = Color(0xFF888888),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
+        } else {
+            // Main Library View
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp)
+            ) {
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.clickable { onOpenProfile() }
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = Color(0xFF1DB954),
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = userName.take(1).uppercase(),
+                                    color = Color.Black,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            text = "Your Library",
+                            color = Color.White,
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        IconButton(onClick = onOpenSettings) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "Settings",
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+
+                        IconButton(onClick = { showCreatePlaylistDialog = true }) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Add Playlist",
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Filter Chips Row
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    items(filterChips) { filter ->
+                        val isSelected = filter == selectedFilter
+                        Surface(
+                            shape = RoundedCornerShape(20.dp),
+                            color = if (isSelected) Color.White else Color(0xFF282828),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(20.dp))
+                                .clickable { selectedFilter = filter }
+                        ) {
+                            Text(
+                                text = filter,
+                                color = if (isSelected) Color.Black else Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    contentPadding = PaddingValues(bottom = 90.dp),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    // "Your Playlists" section
+                    if (userPlaylists.isNotEmpty()) {
+                        item {
+                            Column {
+                                Text(
+                                    text = "Your Playlists",
+                                    color = Color.White,
+                                    fontSize = 17.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(10.dp))
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    items(userPlaylists) { pl ->
+                                        UserPlaylistCard(
+                                            playlist = pl,
+                                            onClick = { selectedPlaylistId = pl.id }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Liked Songs Pinned Item
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    if (likedTracks.isNotEmpty()) {
+                                        PlaybackManager.playTrack(likedTracks.first(), likedTracks)
+                                    }
+                                }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(60.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(
+                                        Brush.linearGradient(
+                                            colors = listOf(Color(0xFF450AF5), Color(0xFFC4EFD9))
+                                        )
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    painter = painterResource(R.drawable.added),
+                                    contentDescription = "Liked Songs",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(28.dp)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(14.dp))
+
+                            Column {
+                                Text(
+                                    text = "Liked Songs",
+                                    color = Color.White,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "Playlist • ${likedTracks.size} songs",
+                                    color = Color(0xFFB3B3B3),
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
+                    }
+
+                    // Other Library Tracks
+                    items(allTracks) { track ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { PlaybackManager.playTrack(track) }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            AsyncImage(
+                                model = track.coverUri.ifEmpty { R.drawable.logo },
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .size(60.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color(0xFF282828)),
+                                contentScale = ContentScale.Crop
+                            )
+
+                            Spacer(modifier = Modifier.width(14.dp))
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = track.title,
+                                    color = Color.White,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "Song • ${track.singer}",
+                                    color = Color(0xFFB3B3B3),
+                                    fontSize = 12.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ExtendedFloatingActionButton at bottom right to create playlist
+            ExtendedFloatingActionButton(
+                onClick = { showCreatePlaylistDialog = true },
+                containerColor = Color(0xFF1DB954),
+                contentColor = Color.Black,
+                icon = { Icon(imageVector = Icons.Default.Add, contentDescription = null) },
+                text = { Text("New Playlist", fontWeight = FontWeight.Bold) },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 16.dp, bottom = 96.dp)
+            )
         }
+
+        // Create Playlist Dialog
+        if (showCreatePlaylistDialog) {
+            AlertDialog(
+                onDismissRequest = {
+                    showCreatePlaylistDialog = false
+                    newPlaylistName = ""
+                },
+                title = { Text("New Playlist", color = Color.White) },
+                text = {
+                    OutlinedTextField(
+                        value = newPlaylistName,
+                        onValueChange = { newPlaylistName = it },
+                        label = { Text("Playlist name") },
+                        placeholder = { Text("My Playlist") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(0xFF1DB954)
+                        )
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            if (newPlaylistName.isNotBlank()) {
+                                val id = UserPlaylistManager.create(newPlaylistName.trim())
+                                selectedPlaylistId = id
+                                showCreatePlaylistDialog = false
+                                newPlaylistName = ""
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1DB954))
+                    ) {
+                        Text("Create", color = Color.Black)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        showCreatePlaylistDialog = false
+                        newPlaylistName = ""
+                    }) {
+                        Text("Cancel", color = Color.White)
+                    }
+                },
+                containerColor = Color(0xFF282828)
+            )
+        }
+    }
+}
+
+@Composable
+fun UserPlaylistCard(
+    playlist: UserPlaylist,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .width(130.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(130.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(
+                    Brush.linearGradient(
+                        listOf(Color(0xFF1DB954), Color(0xFF0F5A29))
+                    )
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.QueueMusic,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(44.dp)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Text(
+            text = playlist.name,
+            color = Color.White,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = "${playlist.trackIds.size} songs",
+            color = Color(0xFFB3B3B3),
+            fontSize = 11.sp
+        )
     }
 }

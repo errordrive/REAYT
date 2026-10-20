@@ -81,7 +81,7 @@ object SettingsManager {
         _visitorData.value = prefs.getString("yt_visitor_data", "") ?: ""
         _adblockDnsEnabled.value = prefs.getBoolean("adblock_dns_enabled", true)
 
-        _isLoggedIn.value = prefs.getBoolean("is_logged_in", true)
+        _isLoggedIn.value = prefs.getBoolean("is_logged_in", false)
         _spDcCookie.value = prefs.getString("sp_dc_cookie", "") ?: ""
 
         val wifiQ = prefs.getString("wifi_quality", AudioQuality.LOSSLESS.name)

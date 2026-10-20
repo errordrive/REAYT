@@ -316,7 +316,11 @@ fun MainAppShell() {
                     durationMs = durationMs,
                     onCollapse = { isPlayerExpanded = false },
                     onOpenQueue = { isQueueOpen = true },
-                    onOpenMediaOutput = { isMediaOutputOpen = true }
+                    onOpenMediaOutput = { isMediaOutputOpen = true },
+                    onGoToArtist = {
+                        isPlayerExpanded = false
+                        selectedTab = NavigationTab.SEARCH
+                    }
                 )
             }
         }

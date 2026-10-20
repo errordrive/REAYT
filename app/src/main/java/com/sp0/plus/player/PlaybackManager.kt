@@ -6,6 +6,9 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import com.sp0.plus.data.AudioStreamResolver
 import com.sp0.plus.data.MusicRepository
+import com.sp0.plus.data.NetworkModule
+import com.sp0.plus.data.PlayHistoryManager
+import com.sp0.plus.data.SettingsManager
 import com.sp0.plus.data.YouTubeMusicClient
 import com.sp0.plus.lyrics.LyricLine
 import com.sp0.plus.lyrics.LyricsEngine
@@ -214,7 +217,7 @@ object PlaybackManager {
             _positionMs.value = 0L
             _isLiked.value = track.isLiked
             _audioQualityBadge.value = track.audioFormat.takeIf { !it.contains("YOUTUBE", ignoreCase = true) && it.isNotBlank() } ?: "LOSSLESS • FLAC"
-            _lyricsLines.value = LyricsEngine.parse(track.lyricsLrc)
+            _lyricsLines.value = emptyList()
             _activeLyricIndex.value = 0
             _streamError.value = null
 
@@ -227,6 +230,14 @@ object PlaybackManager {
                 try {
                     var streamUrl = track.url
                     var badge = _audioQualityBadge.value
+
+                    if (DownloadManager.isDownloaded(track.youtubeVideoId)) {
+                        val localPath = DownloadManager.getLocalPath(track.youtubeVideoId)
+                        if (!localPath.isNullOrBlank()) {
+                            streamUrl = localPath
+                            badge = "OFFLINE • CACHED"
+                        }
+                    }
 
                     if (streamUrl.isBlank()) {
                         val resolved = AudioStreamResolver.resolveStream(
@@ -252,6 +263,28 @@ object PlaybackManager {
                     _streamError.value = null
 
                     executePlayback(track, streamUrl)
+                    PlayHistoryManager.recordPlay(track)
+
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            val title = java.net.URLEncoder.encode(track.title, "UTF-8")
+                            val artist = java.net.URLEncoder.encode(track.singer, "UTF-8")
+                            val url = "https://lrclib.net/api/get?artist_name=$artist&track_name=$title"
+                            val response = NetworkModule.apiClient.newCall(
+                                okhttp3.Request.Builder().url(url).build()
+                            ).execute()
+                            val body = response.body?.string() ?: return@launch
+                            val json = org.json.JSONObject(body)
+                            val lrc = json.optString("syncedLyrics", "")
+                            if (lrc.isNotBlank()) {
+                                _lyricsLines.value = LyricsEngine.parse(lrc)
+                            } else {
+                                _lyricsLines.value = emptyList()
+                            }
+                        } catch (_: Exception) {
+                            _lyricsLines.value = emptyList()
+                        }
+                    }
                 } catch (e: Throwable) {
                     android.util.Log.e("PlaybackManager", "Playback stream error: ${e.message}", e)
                     _isPending.value = false
@@ -345,13 +378,29 @@ object PlaybackManager {
         }
     }
 
+    fun skipForward10() {
+        val newPos = (_positionMs.value + 10_000L).coerceAtMost(_durationMs.value)
+        seekTo(newPos)
+    }
+
+    fun skipBackward10() {
+        val newPos = (_positionMs.value - 10_000L).coerceAtLeast(0L)
+        seekTo(newPos)
+    }
+
     fun skipNext() {
         val q = _queue.value
         if (q.isEmpty()) return
 
-        var nextIdx = _currentIndex.value + 1
-        if (nextIdx >= q.size) {
-            nextIdx = 0
+        var nextIdx: Int
+        if (_isShuffle.value && q.size > 1) {
+            val possibleIndices = q.indices.filter { it != _currentIndex.value }
+            nextIdx = if (possibleIndices.isNotEmpty()) possibleIndices.random() else (_currentIndex.value + 1) % q.size
+        } else {
+            nextIdx = _currentIndex.value + 1
+            if (nextIdx >= q.size) {
+                nextIdx = 0
+            }
         }
         playTrack(q[nextIdx])
     }
@@ -404,6 +453,30 @@ object PlaybackManager {
         _currentTrack.value = track.copy(isLiked = newLiked)
     }
 
+    private fun executeCrossfadeThenSkip() {
+        if (SettingsManager.crossfadeEnabled.value) {
+            val crossfadeDurationMs = SettingsManager.crossfadeDurationMs.value
+            scope.launch {
+                val steps = (crossfadeDurationMs / 50L).coerceAtLeast(1L)
+                for (i in 0 until steps) {
+                    val vol = 1f - (i.toFloat() / steps.toFloat())
+                    PlaybackService.instance?.player?.volume = vol
+                    delay(50L)
+                }
+                skipNext()
+                val upSteps = (300L / 50L).coerceAtLeast(1L)
+                for (i in 0 until upSteps) {
+                    val vol = (i.toFloat() / upSteps.toFloat())
+                    PlaybackService.instance?.player?.volume = vol
+                    delay(50L)
+                }
+                PlaybackService.instance?.player?.volume = 1f
+            }
+        } else {
+            skipNext()
+        }
+    }
+
     private fun handleTrackEnded() {
         when (_repeatMode.value) {
             RepeatMode.ONE -> {
@@ -411,10 +484,10 @@ object PlaybackManager {
                 val activePlayer = PlaybackService.instance?.player ?: mediaController
                 activePlayer?.play()
             }
-            RepeatMode.ALL -> skipNext()
+            RepeatMode.ALL -> executeCrossfadeThenSkip()
             RepeatMode.OFF -> {
                 if (_currentIndex.value < _queue.value.lastIndex) {
-                    skipNext()
+                    executeCrossfadeThenSkip()
                 } else {
                     _isPlaying.value = false
                     seekTo(0L)

@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
+import com.sp0.plus.ui.notification.PlaybackService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -16,11 +17,14 @@ data class OutputDevice(
     val id: String,
     val name: String,
     val type: AudioDeviceType,
-    val isCurrent: Boolean
+    val isCurrent: Boolean,
+    val systemId: Int = 0,
+    val deviceType: Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) AudioDeviceInfo.TYPE_BUILTIN_SPEAKER else 2
 )
 
 object DeviceOutputManager {
     private var audioManager: AudioManager? = null
+    private var appContext: Context? = null
 
     private val _availableDevices = MutableStateFlow<List<OutputDevice>>(emptyList())
     val availableDevices: StateFlow<List<OutputDevice>> = _availableDevices.asStateFlow()
@@ -34,6 +38,7 @@ object DeviceOutputManager {
     val currentVolume: StateFlow<Float> = _currentVolume.asStateFlow()
 
     fun init(context: Context) {
+        this.appContext = context.applicationContext
         val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         this.audioManager = am
 
@@ -54,7 +59,11 @@ object DeviceOutputManager {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val outputs = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-            for (dev in outputs) {
+            // Deduplicate outputs by productName: group AudioDeviceInfo entries by productName, keep only the first per group
+            val uniqueOutputs = outputs.groupBy { it.productName?.toString()?.trim() ?: it.id.toString() }
+                .values.mapNotNull { it.firstOrNull() }
+
+            for (dev in uniqueOutputs) {
                 val (type, isCurrent) = when (dev.type) {
                     AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
                     AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> AudioDeviceType.BLUETOOTH to true
@@ -78,7 +87,16 @@ object DeviceOutputManager {
                     else -> "External Audio Device"
                 }
 
-                devices.add(OutputDevice(dev.id.toString(), devName, type, isCurrent))
+                devices.add(
+                    OutputDevice(
+                        id = dev.id.toString(),
+                        name = devName,
+                        type = type,
+                        isCurrent = isCurrent,
+                        systemId = dev.id,
+                        deviceType = dev.type
+                    )
+                )
             }
         }
 
@@ -105,6 +123,18 @@ object DeviceOutputManager {
         }
         _availableDevices.value = updated
         _currentDevice.value = device.copy(isCurrent = true)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val ctx = appContext
+            val am = (ctx?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager) ?: audioManager
+            if (am != null) {
+                val allDevices = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+                val target = allDevices.firstOrNull { it.id == device.systemId }
+                if (target != null) {
+                    PlaybackService.instance?.player?.setPreferredAudioDevice(target)
+                }
+            }
+        }
     }
 
     fun setVolume(volumeFraction: Float) {

@@ -5,12 +5,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
@@ -30,10 +30,10 @@ import com.sp0.plus.R
 import com.sp0.plus.data.Category
 import com.sp0.plus.data.MusicRepository
 import com.sp0.plus.data.YouTubeMusicClient
-import kotlinx.coroutines.delay
 import com.sp0.plus.lyrics.LyricsEngine
 import com.sp0.plus.model.SongsModel
 import com.sp0.plus.player.PlaybackManager
+import kotlinx.coroutines.delay
 
 @Composable
 fun SearchScreen(
@@ -44,7 +44,23 @@ fun SearchScreen(
     var searchFailed by remember { mutableStateOf(false) }
     var searchResults by remember { mutableStateOf<List<SongsModel>>(emptyList()) }
 
-    // Debounced YouTube Music search; falls back to the bundled demo tracks if offline/blocked.
+    var selectedCategory by remember { mutableStateOf<Category?>(null) }
+    var categoryTracks by remember { mutableStateOf<List<SongsModel>>(emptyList()) }
+    var isLoadingCategory by remember { mutableStateOf(false) }
+
+    LaunchedEffect(selectedCategory) {
+        val cat = selectedCategory ?: return@LaunchedEffect
+        isLoadingCategory = true
+        categoryTracks = try {
+            val remote = YouTubeMusicClient.searchSongs("${cat.title} music")
+            remote.ifEmpty { MusicRepository.search(cat.title) }
+        } catch (_: Exception) {
+            MusicRepository.search(cat.title)
+        }
+        isLoadingCategory = false
+    }
+
+    // Debounced YouTube Music search
     LaunchedEffect(searchQuery) {
         if (searchQuery.isBlank()) {
             searchResults = emptyList()
@@ -64,133 +80,197 @@ fun SearchScreen(
         isSearching = false
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Color(0xFF121212))
-            .statusBarsPadding()
-            .padding(horizontal = 16.dp)
-    ) {
-        Spacer(modifier = Modifier.height(16.dp))
+    if (selectedCategory != null) {
+        val cat = selectedCategory!!
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .background(Color(0xFF121212))
+                .statusBarsPadding()
+                .padding(horizontal = 16.dp)
+        ) {
+            Spacer(modifier = Modifier.height(16.dp))
 
-        Text(
-            text = "Search",
-            color = Color.White,
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Search Input Bar
-        OutlinedTextField(
-            value = searchQuery,
-            onValueChange = { searchQuery = it },
-            placeholder = {
+            // Dedicated Category Page Header
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = { selectedCategory = null }) {
+                    Icon(
+                        imageVector = Icons.Default.ArrowBack,
+                        contentDescription = "Back",
+                        tint = Color.White
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "What do you want to listen to?",
-                    color = Color(0xFF747474),
-                    fontSize = 14.sp
+                    text = cat.title,
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold
                 )
-            },
-            leadingIcon = {
-                Icon(
-                    imageVector = Icons.Default.Search,
-                    contentDescription = "Search",
-                    tint = Color.Black
-                )
-            },
-            trailingIcon = {
-                if (searchQuery.isNotEmpty()) {
-                    IconButton(onClick = { searchQuery = "" }) {
-                        Icon(
-                            imageVector = Icons.Default.Clear,
-                            contentDescription = "Clear",
-                            tint = Color.Black
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            if (isLoadingCategory) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(bottom = 90.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(color = Color(0xFF1DB954))
+                }
+            } else {
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(bottom = 90.dp),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    items(categoryTracks) { track ->
+                        SearchResultRow(
+                            track = track,
+                            onClick = { PlaybackManager.playTrack(track, categoryTracks) }
                         )
                     }
                 }
-            },
-            singleLine = true,
-            shape = RoundedCornerShape(8.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = Color.White,
-                unfocusedContainerColor = Color.White,
-                focusedTextColor = Color.Black,
-                unfocusedTextColor = Color.Black,
-                focusedBorderColor = Color.Transparent,
-                unfocusedBorderColor = Color.Transparent
-            ),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(52.dp)
-        )
+            }
+        }
+    } else {
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .background(Color(0xFF121212))
+                .statusBarsPadding()
+                .padding(horizontal = 16.dp)
+        ) {
+            Spacer(modifier = Modifier.height(16.dp))
 
-        Spacer(modifier = Modifier.height(20.dp))
-
-        if (searchQuery.isBlank()) {
-            // Category Browse Grid
             Text(
-                text = "Browse all",
+                text = "Search",
                 color = Color.White,
-                fontSize = 16.sp,
+                fontSize = 24.sp,
                 fontWeight = FontWeight.Bold
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                contentPadding = PaddingValues(bottom = 90.dp),
-                modifier = Modifier.fillMaxSize()
-            ) {
-                items(MusicRepository.categories) { cat ->
-                    CategoryTile(
-                        category = cat,
-                        onClick = {
-                            searchQuery = cat.title.split(" ").first()
+            // Search Input Bar
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = {
+                    Text(
+                        text = "What do you want to listen to?",
+                        color = Color(0xFF747474),
+                        fontSize = 14.sp
+                    )
+                },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = "Search",
+                        tint = Color.Black
+                    )
+                },
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { searchQuery = "" }) {
+                            Icon(
+                                imageVector = Icons.Default.Clear,
+                                contentDescription = "Clear",
+                                tint = Color.Black
+                            )
                         }
+                    }
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(8.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = Color.White,
+                    unfocusedContainerColor = Color.White,
+                    focusedTextColor = Color.Black,
+                    unfocusedTextColor = Color.Black,
+                    focusedBorderColor = Color.Transparent,
+                    unfocusedBorderColor = Color.Transparent
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+            )
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            if (searchQuery.isBlank()) {
+                // Category Browse Grid
+                Text(
+                    text = "Browse all",
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(2),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(bottom = 90.dp),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    items(MusicRepository.categories) { cat ->
+                        CategoryTile(
+                            category = cat,
+                            onClick = {
+                                selectedCategory = cat
+                            }
+                        )
+                    }
+                }
+            } else {
+                // Live Search Results
+                Text(
+                    text = "Top Results",
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                if (isSearching) {
+                    LinearProgressIndicator(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        color = Color(0xFF1DB954),
+                        trackColor = Color(0xFF282828)
+                    )
+                } else if (searchFailed) {
+                    Text(
+                        text = "Music search unavailable. Check your connection or Visitor ID in Settings. Showing local results.",
+                        color = Color(0xFFB3B3B3),
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(top = 8.dp)
                     )
                 }
-            }
-        } else {
-            // Live Search Results
-            Text(
-                text = "Top Results",
-                color = Color.White,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold
-            )
 
-            if (isSearching) {
-                LinearProgressIndicator(
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    color = Color(0xFF1DB954),
-                    trackColor = Color(0xFF282828)
-                )
-            } else if (searchFailed) {
-                Text(
-                    text = "Music search unavailable. Check your connection or Visitor ID in Settings. Showing local results.",
-                    color = Color(0xFFB3B3B3),
-                    fontSize = 12.sp,
-                    modifier = Modifier.padding(top = 8.dp)
-                )
-            }
+                Spacer(modifier = Modifier.height(12.dp))
 
-            Spacer(modifier = Modifier.height(12.dp))
-
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(bottom = 90.dp),
-                modifier = Modifier.fillMaxSize()
-            ) {
-                items(searchResults) { track ->
-                    SearchResultRow(
-                        track = track,
-                        onClick = { PlaybackManager.playTrack(track, searchResults) }
-                    )
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(bottom = 90.dp),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    items(searchResults) { track ->
+                        SearchResultRow(
+                            track = track,
+                            onClick = { PlaybackManager.playTrack(track, searchResults) }
+                        )
+                    }
                 }
             }
         }
@@ -229,7 +309,7 @@ fun CategoryTile(
             Icon(
                 painter = painterResource(category.iconRes),
                 contentDescription = null,
-                tint = Color.White.copy(alpha = 0.9f),
+                tint = Color.White.copy(alpha = 0.85f),
                 modifier = Modifier
                     .size(40.dp)
                     .align(Alignment.BottomEnd)
@@ -248,7 +328,7 @@ fun SearchResultRow(
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
             .clickable { onClick() }
-            .padding(vertical = 6.dp, horizontal = 4.dp),
+            .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         AsyncImage(
@@ -268,19 +348,24 @@ fun SearchResultRow(
                 text = track.title,
                 color = Color.White,
                 fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
+                fontWeight = FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-
+            Spacer(modifier = Modifier.height(2.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
+                val badge = if (track.audioFormat.isNotBlank() && !track.audioFormat.contains("YOUTUBE", true)) {
+                    track.audioFormat
+                } else {
+                    "LOSSLESS"
+                }
                 Surface(
                     shape = RoundedCornerShape(2.dp),
                     color = Color(0xFF1DB954).copy(alpha = 0.2f),
                     modifier = Modifier.padding(end = 6.dp)
                 ) {
                     Text(
-                        text = if (track.youtubeVideoId.isNotBlank()) "YT" else "FLAC",
+                        text = badge,
                         color = Color(0xFF1DB954),
                         fontSize = 8.sp,
                         fontWeight = FontWeight.Bold,
@@ -289,7 +374,7 @@ fun SearchResultRow(
                 }
 
                 Text(
-                    text = "${track.singer} • ${track.album}",
+                    text = track.singer,
                     color = Color(0xFFB3B3B3),
                     fontSize = 12.sp,
                     maxLines = 1,
@@ -298,10 +383,12 @@ fun SearchResultRow(
             }
         }
 
-        Text(
-            text = LyricsEngine.formatDuration(track.durationMs),
-            color = Color(0xFF888888),
-            fontSize = 12.sp
-        )
+        if (track.durationMs > 0) {
+            Text(
+                text = LyricsEngine.formatDuration(track.durationMs),
+                color = Color(0xFF747474),
+                fontSize = 12.sp
+            )
+        }
     }
 }

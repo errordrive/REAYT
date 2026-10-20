@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -18,6 +19,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
@@ -28,13 +30,12 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.sp0.plus.R
 import com.sp0.plus.data.MusicRepository
+import com.sp0.plus.data.PlayHistoryManager
 import com.sp0.plus.data.Playlist
 import com.sp0.plus.data.SettingsManager
 import com.sp0.plus.model.SongsModel
 import com.sp0.plus.player.PlaybackManager
 import java.util.Calendar
-
-import androidx.compose.material.icons.filled.Settings
 
 @Composable
 fun HomeScreen(
@@ -43,8 +44,17 @@ fun HomeScreen(
     modifier: Modifier = Modifier
 ) {
     val userName by SettingsManager.userName.collectAsState()
-    val realTimeTracks by MusicRepository.realTimeTracks.collectAsState()
+    val recentlyPlayed by MusicRepository.recentlyPlayed.collectAsState()
+    val genreHits by MusicRepository.genreHits.collectAsState()
+    val artistHits by MusicRepository.artistHits.collectAsState()
+    val timeOfDayHits by MusicRepository.timeOfDayHits.collectAsState()
+    val losslessPicks by MusicRepository.losslessPicks.collectAsState()
     val curatedPlaylists by MusicRepository.curatedPlaylists.collectAsState()
+
+    val topGenreName by MusicRepository.topGenreName.collectAsState()
+    val topArtistName by MusicRepository.topArtistName.collectAsState()
+    val timeOfDayName by MusicRepository.timeOfDayName.collectAsState()
+
     val isLoadingLive by MusicRepository.isLoadingLive.collectAsState()
     val streamError by PlaybackManager.streamError.collectAsState()
 
@@ -114,7 +124,9 @@ fun HomeScreen(
 
             if (isLoadingLive) {
                 LinearProgressIndicator(
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
                     color = Color(0xFF1DB954),
                     trackColor = Color(0xFF282828)
                 )
@@ -122,7 +134,9 @@ fun HomeScreen(
 
             streamError?.let { err ->
                 Card(
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF3E1F1F))
                 ) {
                     Text(
@@ -135,98 +149,64 @@ fun HomeScreen(
             }
         }
 
-        if (realTimeTracks.isEmpty() && isLoadingLive) {
-            item {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 48.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    CircularProgressIndicator(
-                        color = Color(0xFF1DB954),
-                        modifier = Modifier.size(36.dp),
-                        strokeWidth = 3.dp
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = "Loading real-time music...",
-                        color = Color.White,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Connecting to Lossless Audio Engine",
-                        color = Color(0xFF888888),
-                        fontSize = 12.sp
-                    )
-                }
-            }
-        }
-
-        // Quick Picks 2-Column Grid
-        if (realTimeTracks.isNotEmpty()) {
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val tracks = realTimeTracks.take(6)
-                    val rows = tracks.chunked(2)
-                    for (row in rows) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            for (item in row) {
-                                QuickPlayCard(
-                                    track = item,
-                                    modifier = Modifier.weight(1f),
-                                    onClick = { PlaybackManager.playTrack(item, realTimeTracks) }
-                                )
-                            }
-                            if (row.size == 1) {
-                                Spacer(modifier = Modifier.weight(1f))
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Global Top Hits
-            item {
+        // Section 1: "Jump back in" (or "Start exploring" hero card)
+        item {
+            if (recentlyPlayed.isNotEmpty()) {
                 Column {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Global Top Hits",
-                            color = Color.White,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Surface(
-                            shape = RoundedCornerShape(4.dp),
-                            color = Color(0xFF1DB954).copy(alpha = 0.2f),
-                            modifier = Modifier.padding(end = 4.dp)
-                        ) {
-                            Text(
-                                text = "LIVE",
-                                color = Color(0xFF1DB954),
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
-                    }
+                    SectionHeader(title = "Jump back in")
                     Spacer(modifier = Modifier.height(12.dp))
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        items(realTimeTracks) { track ->
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        items(recentlyPlayed) { track ->
                             TrackAlbumCard(
                                 track = track,
-                                onClick = { PlaybackManager.playTrack(track, realTimeTracks) }
+                                onClick = { PlaybackManager.playTrack(track, recentlyPlayed) }
+                            )
+                        }
+                    }
+                }
+            } else {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFF1F1F1F),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .background(
+                                Brush.horizontalGradient(
+                                    listOf(Color(0xFF1DB954).copy(alpha = 0.2f), Color(0xFF1F1F1F))
+                                )
+                            )
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = Color(0xFF1DB954),
+                            modifier = Modifier.size(44.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = null,
+                                    tint = Color.Black,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Column {
+                            Text(
+                                text = "Start exploring",
+                                color = Color.White,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Play music to build your personalized history & mix",
+                                color = Color(0xFFB3B3B3),
+                                fontSize = 12.sp
                             )
                         }
                     }
@@ -234,39 +214,86 @@ fun HomeScreen(
             }
         }
 
-        // Curated Lossless Playlists
+        // Section 2: "{topGenre} for you"
+        if (genreHits.isNotEmpty()) {
+            item {
+                Column {
+                    SectionHeader(title = "$topGenreName for you")
+                    Spacer(modifier = Modifier.height(12.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        items(genreHits) { track ->
+                            TrackAlbumCard(
+                                track = track,
+                                onClick = { PlaybackManager.playTrack(track, genreHits) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Section 3: "Because you like {topArtist}" (only if history not empty)
+        if (artistHits.isNotEmpty() && topArtistName.isNotBlank()) {
+            item {
+                Column {
+                    SectionHeader(title = "Because you like $topArtistName")
+                    Spacer(modifier = Modifier.height(12.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        items(artistHits) { track ->
+                            TrackAlbumCard(
+                                track = track,
+                                onClick = { PlaybackManager.playTrack(track, artistHits) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Section 4: "{timeOfDay} vibes"
+        if (timeOfDayHits.isNotEmpty()) {
+            item {
+                val formattedTime = timeOfDayName.replaceFirstChar { it.uppercase() }
+                Column {
+                    SectionHeader(title = "$formattedTime vibes")
+                    Spacer(modifier = Modifier.height(12.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        items(timeOfDayHits) { track ->
+                            TrackAlbumCard(
+                                track = track,
+                                onClick = { PlaybackManager.playTrack(track, timeOfDayHits) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Section 5: "Lossless picks"
+        if (losslessPicks.isNotEmpty()) {
+            item {
+                Column {
+                    SectionHeader(title = "Lossless picks")
+                    Spacer(modifier = Modifier.height(12.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        items(losslessPicks) { track ->
+                            TrackAlbumCard(
+                                track = track,
+                                onClick = { PlaybackManager.playTrack(track, losslessPicks) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Curated Lossless Playlists (if available)
         if (curatedPlaylists.isNotEmpty()) {
             item {
                 Column {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Lossless Playlists",
-                            color = Color.White,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Surface(
-                            shape = RoundedCornerShape(4.dp),
-                            color = Color(0xFF1DB954).copy(alpha = 0.2f),
-                            modifier = Modifier.padding(end = 4.dp)
-                        ) {
-                            Text(
-                                text = "STUDIO MASTER",
-                                color = Color(0xFF1DB954),
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
-                    }
+                    SectionHeader(title = "Lossless Playlists")
                     Spacer(modifier = Modifier.height(12.dp))
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                         items(curatedPlaylists) { playlist ->
                             PlaylistCard(
                                 playlist = playlist,
@@ -282,7 +309,7 @@ fun HomeScreen(
             }
         }
 
-        // Bottom space so content isn't covered by mini-player
+        // Bottom spacer
         item {
             Spacer(modifier = Modifier.height(80.dp))
         }
@@ -290,39 +317,28 @@ fun HomeScreen(
 }
 
 @Composable
-fun QuickPlayCard(
-    track: SongsModel,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
+fun SectionHeader(
+    title: String,
+    onSeeAll: () -> Unit = {}
 ) {
-    Surface(
-        modifier = modifier
-            .height(56.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .clickable { onClick() },
-        color = Color(0xFF282828)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            AsyncImage(
-                model = track.coverUri.ifEmpty { R.drawable.logo },
-                contentDescription = null,
-                modifier = Modifier
-                    .size(56.dp)
-                    .background(Color(0xFF333333)),
-                contentScale = ContentScale.Crop
-            )
-            Spacer(modifier = Modifier.width(10.dp))
-            Text(
-                text = track.title,
-                color = Color.White,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-            Spacer(modifier = Modifier.width(6.dp))
-        }
+        Text(
+            text = title,
+            color = Color.White,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            text = "See all",
+            color = Color(0xFF1DB954),
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.clickable { onSeeAll() }
+        )
     }
 }
 
@@ -349,19 +365,26 @@ fun TrackAlbumCard(
                 contentScale = ContentScale.Crop
             )
 
-            // Lossless Tag
-            Surface(
-                shape = RoundedCornerShape(bottomEnd = 6.dp),
-                color = Color(0xFF1DB954),
-                modifier = Modifier.align(Alignment.TopStart)
-            ) {
-                Text(
-                    text = "FLAC",
-                    color = Color.Black,
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                )
+            // Dynamic Quality Tag
+            val badgeText = if (track.audioFormat.isNotBlank() && !track.audioFormat.contains("YOUTUBE", true)) {
+                track.audioFormat
+            } else {
+                ""
+            }
+            if (badgeText.isNotBlank()) {
+                Surface(
+                    shape = RoundedCornerShape(bottomEnd = 6.dp),
+                    color = Color(0xFF1DB954),
+                    modifier = Modifier.align(Alignment.TopStart)
+                ) {
+                    Text(
+                        text = badgeText,
+                        color = Color.Black,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
             }
         }
 
@@ -378,7 +401,7 @@ fun TrackAlbumCard(
         Text(
             text = track.singer,
             color = Color(0xFFB3B3B3),
-            fontSize = 11.sp,
+            fontSize = 12.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )

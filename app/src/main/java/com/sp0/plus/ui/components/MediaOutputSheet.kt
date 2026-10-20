@@ -1,5 +1,6 @@
 package com.sp0.plus.ui.components
 
+import android.media.AudioDeviceInfo
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -15,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -24,6 +26,17 @@ import com.sp0.plus.R
 import com.sp0.plus.player.AudioDeviceType
 import com.sp0.plus.player.DeviceOutputManager
 import com.sp0.plus.player.OutputDevice
+
+fun iconForDeviceType(type: Int): ImageVector = when (type) {
+    AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+    AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> Icons.Default.Bluetooth
+    AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+    AudioDeviceInfo.TYPE_WIRED_HEADSET  -> Icons.Default.Headphones
+    AudioDeviceInfo.TYPE_USB_HEADSET,
+    AudioDeviceInfo.TYPE_USB_DEVICE     -> Icons.Default.Usb
+    AudioDeviceInfo.TYPE_BUS            -> Icons.Default.DirectionsBus
+    else                               -> Icons.Default.PhoneAndroid
+}
 
 @Composable
 fun MediaOutputSheet(
@@ -100,7 +113,7 @@ fun MediaOutputSheet(
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
-                                painter = painterResource(R.drawable.ic_devices),
+                                imageVector = iconForDeviceType(currentDevice.deviceType),
                                 contentDescription = null,
                                 tint = Color.Black,
                                 modifier = Modifier.size(24.dp)
@@ -198,12 +211,7 @@ fun MediaOutputSheet(
                                 .padding(16.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            val icon = when (device.type) {
-                                AudioDeviceType.BLUETOOTH -> Icons.Default.Bluetooth
-                                AudioDeviceType.WIRED_HEADSET -> Icons.Default.Headphones
-                                AudioDeviceType.USB -> Icons.Default.Usb
-                                else -> Icons.Default.Speaker
-                            }
+                            val icon = iconForDeviceType(device.deviceType)
 
                             Icon(
                                 imageVector = icon,

@@ -2,7 +2,6 @@ package com.sp0.plus.data
 
 import com.sp0.plus.R
 import com.sp0.plus.model.SongsModel
-
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -11,6 +10,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.Request
+import org.json.JSONObject
+import java.util.Calendar
 
 data class Category(
     val id: String,
@@ -51,11 +54,35 @@ object MusicRepository {
     private val _realTimeTracks = MutableStateFlow<List<SongsModel>>(emptyList())
     val realTimeTracks: StateFlow<List<SongsModel>> = _realTimeTracks.asStateFlow()
 
+    private val _recentlyPlayed = MutableStateFlow<List<SongsModel>>(emptyList())
+    val recentlyPlayed: StateFlow<List<SongsModel>> = _recentlyPlayed.asStateFlow()
+
+    private val _genreHits = MutableStateFlow<List<SongsModel>>(emptyList())
+    val genreHits: StateFlow<List<SongsModel>> = _genreHits.asStateFlow()
+
+    private val _artistHits = MutableStateFlow<List<SongsModel>>(emptyList())
+    val artistHits: StateFlow<List<SongsModel>> = _artistHits.asStateFlow()
+
+    private val _timeOfDayHits = MutableStateFlow<List<SongsModel>>(emptyList())
+    val timeOfDayHits: StateFlow<List<SongsModel>> = _timeOfDayHits.asStateFlow()
+
+    private val _losslessPicks = MutableStateFlow<List<SongsModel>>(emptyList())
+    val losslessPicks: StateFlow<List<SongsModel>> = _losslessPicks.asStateFlow()
+
     private val _curatedPlaylists = MutableStateFlow<List<Playlist>>(emptyList())
     val curatedPlaylists: StateFlow<List<Playlist>> = _curatedPlaylists.asStateFlow()
 
     private val _isLoadingLive = MutableStateFlow(false)
     val isLoadingLive: StateFlow<Boolean> = _isLoadingLive.asStateFlow()
+
+    private val _topGenreName = MutableStateFlow("Top Hits")
+    val topGenreName: StateFlow<String> = _topGenreName.asStateFlow()
+
+    private val _topArtistName = MutableStateFlow("")
+    val topArtistName: StateFlow<String> = _topArtistName.asStateFlow()
+
+    private val _timeOfDayName = MutableStateFlow("morning")
+    val timeOfDayName: StateFlow<String> = _timeOfDayName.asStateFlow()
 
     private val repositoryScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -63,60 +90,110 @@ object MusicRepository {
         loadRealTimeMusic()
     }
 
+    suspend fun detectUserRegion(): String {
+        return withTimeoutOrNull(3000L) {
+            try {
+                val req = Request.Builder()
+                    .url("https://ip-api.com/json?fields=countryCode")
+                    .build()
+                val resp = NetworkModule.apiClient.newCall(req).execute()
+                val body = resp.body?.string() ?: return@withTimeoutOrNull "Global"
+                val json = JSONObject(body)
+                val code = json.optString("countryCode", "Global")
+                if (code.isNotBlank()) code else "Global"
+            } catch (_: Throwable) {
+                "Global"
+            }
+        } ?: "Global"
+    }
+
     fun loadRealTimeMusic() {
         repositoryScope.launch {
             _isLoadingLive.value = true
             try {
-                val trendingJob = async { YouTubeMusicClient.fetchTrending() }
-                val losslessJob = async { YouTubeMusicClient.fetchLosslessHits() }
-                val chillJob = async { YouTubeMusicClient.fetchChillHits() }
-
-                val trending = trendingJob.await()
-                val lossless = losslessJob.await()
-                val chill = chillJob.await()
-
-                if (trending.isNotEmpty()) {
-                    _realTimeTracks.value = trending
+                val region = detectUserRegion()
+                val topGenre = PlayHistoryManager.getTopGenre()
+                val topArtist = PlayHistoryManager.getTopArtists(1).firstOrNull() ?: ""
+                val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+                val timeOfDay = when (hour) {
+                    in 5..11 -> "morning"
+                    in 12..17 -> "afternoon"
+                    in 18..21 -> "evening"
+                    else -> "late night"
                 }
 
+                _topGenreName.value = topGenre
+                _topArtistName.value = topArtist
+                _timeOfDayName.value = timeOfDay
+
+                // a. Recently played (local)
+                val recent = PlayHistoryManager.getHistory().take(6)
+                _recentlyPlayed.value = recent
+
+                // Queries b, c, d, e in parallel
+                val genreQuery = if (region != "Global") "$topGenre music hits $region" else "$topGenre music hits"
+                val artistQuery = if (topArtist.isNotBlank()) "Best $topArtist songs playlist" else "Top Global Hits"
+                val timeQuery = "$timeOfDay playlist"
+                val losslessQuery = if (region != "Global") "Lossless $region music 2024" else "Lossless hits music 2024"
+
+                val genreDeferred = async { YouTubeMusicClient.searchSongs(genreQuery).take(12) }
+                val artistDeferred = async { YouTubeMusicClient.searchSongs(artistQuery).take(12) }
+                val timeDeferred = async { YouTubeMusicClient.searchSongs(timeQuery).take(12) }
+                val losslessDeferred = async { YouTubeMusicClient.searchSongs(losslessQuery).take(12) }
+
+                val genreRes = genreDeferred.await()
+                val artistRes = artistDeferred.await()
+                val timeRes = timeDeferred.await()
+                val losslessRes = losslessDeferred.await()
+
+                if (genreRes.isNotEmpty()) _genreHits.value = genreRes
+                if (artistRes.isNotEmpty()) _artistHits.value = artistRes
+                if (timeRes.isNotEmpty()) _timeOfDayHits.value = timeRes
+                if (losslessRes.isNotEmpty()) _losslessPicks.value = losslessRes
+
+                // Update realTimeTracks for backwards compatibility
+                val allCombined = (recent + losslessRes + genreRes + artistRes + timeRes).distinctBy { it.youtubeVideoId }
+                if (allCombined.isNotEmpty()) {
+                    _realTimeTracks.value = allCombined
+                }
+
+                // Playlists
                 val playlists = mutableListOf<Playlist>()
-                if (lossless.isNotEmpty()) {
+                if (losslessRes.isNotEmpty()) {
                     playlists.add(
                         Playlist(
                             id = "p_lossless",
-                            title = "Lossless Master Hits",
+                            title = "Lossless Master Picks",
                             description = "Studio master quality tracks streaming in lossless fidelity.",
-                            coverUrl = lossless.firstOrNull()?.coverUri.orEmpty(),
-                            tracks = lossless
+                            coverUrl = losslessRes.firstOrNull()?.coverUri.orEmpty(),
+                            tracks = losslessRes
                         )
                     )
                 }
-                if (trending.isNotEmpty()) {
+                if (genreRes.isNotEmpty()) {
                     playlists.add(
                         Playlist(
-                            id = "p_global",
-                            title = "Today's Global Top Hits",
-                            description = "The hottest world-charting songs streaming live in studio quality.",
-                            coverUrl = trending.firstOrNull()?.coverUri.orEmpty(),
-                            tracks = trending
+                            id = "p_genre",
+                            title = "$topGenre Hits",
+                            description = "Top $topGenre essentials chosen for your profile.",
+                            coverUrl = genreRes.firstOrNull()?.coverUri.orEmpty(),
+                            tracks = genreRes
                         )
                     )
                 }
-                if (chill.isNotEmpty()) {
+                if (timeRes.isNotEmpty()) {
                     playlists.add(
                         Playlist(
-                            id = "p_chill",
-                            title = "Late Night Vibes & Lo-Fi",
-                            description = "Mellow acoustic hits, calm sessions, and synchronized lyrics.",
-                            coverUrl = chill.firstOrNull()?.coverUri.orEmpty(),
-                            tracks = chill
+                            id = "p_time",
+                            title = "${timeOfDay.replaceFirstChar { it.uppercase() }} Vibes",
+                            description = "Soundtrack for your $timeOfDay.",
+                            coverUrl = timeRes.firstOrNull()?.coverUri.orEmpty(),
+                            tracks = timeRes
                         )
                     )
                 }
+                _curatedPlaylists.value = playlists
 
-                if (playlists.isNotEmpty()) {
-                    _curatedPlaylists.value = playlists
-                }
             } catch (e: Throwable) {
                 android.util.Log.e("MusicRepository", "Failed loading real-time music", e)
             } finally {

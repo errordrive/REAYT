@@ -15,16 +15,20 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.sp0.plus.R
 import com.sp0.plus.data.MusicRepository
+import com.sp0.plus.data.PlayHistoryManager
 import com.sp0.plus.data.SettingsManager
 import com.sp0.plus.player.PlaybackManager
 
@@ -38,15 +42,13 @@ fun ProfileScreen(
     val userName by SettingsManager.userName.collectAsState()
     val userEmail by SettingsManager.userEmail.collectAsState()
     val accountTier by SettingsManager.accountTier.collectAsState()
-    val realTimeTracks by MusicRepository.realTimeTracks.collectAsState()
     val curatedPlaylists by MusicRepository.curatedPlaylists.collectAsState()
-    val likedTracks = remember(realTimeTracks) { realTimeTracks.filter { it.isLiked } }
-    val topArtists = remember(realTimeTracks) {
-        realTimeTracks
-            .filter { it.singer.isNotBlank() }
-            .distinctBy { it.singer }
-            .take(6)
-    }
+    val wifiQuality by SettingsManager.wifiQuality.collectAsState()
+
+    val historyItems by PlayHistoryManager.history.collectAsState()
+    val history = historyItems.map { it.track }
+    val likedTracks = history.filter { it.isLiked }
+    val topArtists = history.filter { it.singer.isNotBlank() }.distinctBy { it.singer }.take(6)
 
     var showEditProfileDialog by remember { mutableStateOf(false) }
     var editName by remember { mutableStateOf(userName) }
@@ -102,7 +104,7 @@ fun ProfileScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(24.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
                 contentPadding = PaddingValues(bottom = 32.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
@@ -182,7 +184,7 @@ fun ProfileScreen(
                     }
                 }
 
-                // Stats Counters (Music Library Metrics)
+                // Stats Counters (Row 1: Metrics)
                 item {
                     Row(
                         modifier = Modifier
@@ -193,14 +195,33 @@ fun ProfileScreen(
                         horizontalArrangement = Arrangement.SpaceEvenly
                     ) {
                         ProfileStatItem(title = "PLAYLISTS", value = curatedPlaylists.size.coerceAtLeast(1).toString())
-                        Divider(modifier = Modifier.height(36.dp).width(1.dp), color = Color(0xFF333333))
+                        HorizontalDivider(modifier = Modifier.height(36.dp).width(1.dp), color = Color(0xFF333333))
                         ProfileStatItem(title = "LIKED SONGS", value = likedTracks.size.toString())
-                        Divider(modifier = Modifier.height(36.dp).width(1.dp), color = Color(0xFF333333))
-                        ProfileStatItem(title = "QUALITY", value = "FLAC")
+                        HorizontalDivider(modifier = Modifier.height(36.dp).width(1.dp), color = Color(0xFF333333))
+                        ProfileStatItem(title = "QUALITY", value = wifiQuality.name)
                     }
                 }
 
-                // Top Artists Section (dynamically computed from real fetched songs)
+                // Stats Counters (Row 2: Listening Habits)
+                item {
+                    val playsThisMonth = PlayHistoryManager.getPlaysThisMonth()
+                    val topGenre = PlayHistoryManager.getTopGenre()
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xFF1E1E1E))
+                            .padding(vertical = 16.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        ProfileStatItem(title = "THIS MONTH", value = "$playsThisMonth plays")
+                        HorizontalDivider(modifier = Modifier.height(36.dp).width(1.dp), color = Color(0xFF333333))
+                        ProfileStatItem(title = "TOP GENRE", value = topGenre)
+                    }
+                }
+
+                // Top Artists Section
                 if (topArtists.isNotEmpty()) {
                     item {
                         Column {
@@ -215,15 +236,21 @@ fun ProfileScreen(
 
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                                 items(topArtists) { artistTrack ->
+                                    val darkenFilter = ColorFilter.colorMatrix(ColorMatrix().apply {
+                                        // Darken slightly to indicate stand-in album art
+                                        setScale(0.85f, 0.85f, 0.85f, 1.0f)
+                                    })
+
                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                         AsyncImage(
                                             model = artistTrack.coverUri.ifEmpty { R.drawable.logo },
                                             contentDescription = artistTrack.singer,
+                                            colorFilter = darkenFilter,
                                             modifier = Modifier
                                                 .size(80.dp)
                                                 .clip(CircleShape)
                                                 .background(Color(0xFF282828)),
-                                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                            contentScale = ContentScale.Crop
                                         )
                                         Spacer(modifier = Modifier.height(8.dp))
                                         Text(
@@ -235,9 +262,9 @@ fun ProfileScreen(
                                             overflow = TextOverflow.Ellipsis
                                         )
                                         Text(
-                                            text = "Artist",
+                                            text = "(album art)",
                                             color = Color(0xFF888888),
-                                            fontSize = 11.sp
+                                            fontSize = 10.sp
                                         )
                                     }
                                 }
@@ -248,24 +275,24 @@ fun ProfileScreen(
 
                 // Recently Played Section
                 item {
-                    if (realTimeTracks.isNotEmpty()) {
-                        Column {
-                            Text(
-                                text = "Recently Played",
-                                color = Color.White,
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                    Column {
+                        Text(
+                            text = "Recently Played",
+                            color = Color.White,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold
+                        )
 
-                            Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
 
+                        if (history.isNotEmpty()) {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                realTimeTracks.take(4).forEach { track ->
+                                history.take(4).forEach { track ->
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .clip(RoundedCornerShape(8.dp))
-                                            .clickable { PlaybackManager.playTrack(track, realTimeTracks) }
+                                            .clickable { PlaybackManager.playTrack(track, history) }
                                             .padding(8.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
@@ -276,7 +303,7 @@ fun ProfileScreen(
                                                 .size(48.dp)
                                                 .clip(RoundedCornerShape(6.dp))
                                                 .background(Color(0xFF282828)),
-                                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                            contentScale = ContentScale.Crop
                                         )
 
                                         Spacer(modifier = Modifier.width(12.dp))
@@ -308,6 +335,26 @@ fun ProfileScreen(
                                     }
                                 }
                             }
+                        } else {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFF1E1E1E),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(120.dp)
+                            ) {
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier.padding(16.dp)
+                                ) {
+                                    Text(
+                                        text = "Play some music to see your history here",
+                                        color = Color(0xFF888888),
+                                        fontSize = 14.sp,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -319,7 +366,9 @@ fun ProfileScreen(
                         onClick = { showLogoutDialog = true },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A1515)),
                         shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth().height(48.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.ExitToApp,

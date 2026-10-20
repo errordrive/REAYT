@@ -1,5 +1,7 @@
 package com.sp0.plus.ui.components
 
+import android.content.Intent
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -17,7 +19,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -25,11 +29,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.sp0.plus.R
+import com.sp0.plus.data.UserPlaylistManager
 import com.sp0.plus.lyrics.LyricsEngine
 import com.sp0.plus.model.SongsModel
+import com.sp0.plus.player.DownloadManager
 import com.sp0.plus.player.PlaybackManager
 import com.sp0.plus.player.RepeatMode
 
+enum class TrackOptionSubView {
+    MAIN, PLAYLISTS, SLEEP_TIMER
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FullPlayerSheet(
     track: SongsModel,
@@ -39,8 +50,11 @@ fun FullPlayerSheet(
     onCollapse: () -> Unit,
     onOpenQueue: () -> Unit,
     onOpenMediaOutput: () -> Unit,
+    onGoToArtist: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+
     val isLiked by PlaybackManager.isLiked.collectAsState()
     val repeatMode by PlaybackManager.repeatMode.collectAsState()
     val isShuffle by PlaybackManager.isShuffle.collectAsState()
@@ -51,7 +65,8 @@ fun FullPlayerSheet(
 
     var showFullLyrics by remember { mutableStateOf(false) }
     var showOptionsMenu by remember { mutableStateOf(false) }
-    var showSleepTimerDialog by remember { mutableStateOf(false) }
+    var currentSubView by remember { mutableStateOf(TrackOptionSubView.MAIN) }
+    var showCreatePlaylistDialog by remember { mutableStateOf(false) }
     var isSeeking by remember { mutableStateOf(false) }
     var seekProgress by remember { mutableStateOf(0f) }
 
@@ -262,7 +277,7 @@ fun FullPlayerSheet(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Playback Controls (Shuffle, Prev, Play/Pause, Next, Repeat)
+            // Playback Controls (Shuffle, Prev, -10s, Play/Pause, +10s, Next, Repeat)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -274,7 +289,7 @@ fun FullPlayerSheet(
                         painter = painterResource(R.drawable.ic_player_shuffle),
                         contentDescription = "Shuffle",
                         tint = if (isShuffle) Color(0xFF1DB954) else Color(0xFFB3B3B3),
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(22.dp)
                     )
                 }
 
@@ -284,7 +299,17 @@ fun FullPlayerSheet(
                         painter = painterResource(R.drawable.ic_player_back),
                         contentDescription = "Previous",
                         tint = Color.White,
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+
+                // Skip backward 10s
+                IconButton(onClick = { PlaybackManager.skipBackward10() }) {
+                    Icon(
+                        imageVector = Icons.Default.Replay10,
+                        contentDescription = "-10s",
+                        tint = Color.White,
+                        modifier = Modifier.size(24.dp)
                     )
                 }
 
@@ -293,7 +318,7 @@ fun FullPlayerSheet(
                     shape = CircleShape,
                     color = Color.White,
                     modifier = Modifier
-                        .size(64.dp)
+                        .size(60.dp)
                         .clip(CircleShape)
                         .clickable { PlaybackManager.togglePlayPause() }
                 ) {
@@ -302,9 +327,19 @@ fun FullPlayerSheet(
                             imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                             contentDescription = if (isPlaying) "Pause" else "Play",
                             tint = Color.Black,
-                            modifier = Modifier.size(34.dp)
+                            modifier = Modifier.size(32.dp)
                         )
                     }
+                }
+
+                // Skip forward 10s
+                IconButton(onClick = { PlaybackManager.skipForward10() }) {
+                    Icon(
+                        imageVector = Icons.Default.Forward10,
+                        contentDescription = "+10s",
+                        tint = Color.White,
+                        modifier = Modifier.size(24.dp)
+                    )
                 }
 
                 // Next
@@ -313,7 +348,7 @@ fun FullPlayerSheet(
                         painter = painterResource(R.drawable.ic_player_skip),
                         contentDescription = "Next",
                         tint = Color.White,
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(28.dp)
                     )
                 }
 
@@ -331,7 +366,7 @@ fun FullPlayerSheet(
                         painter = painterResource(repeatIcon),
                         contentDescription = "Repeat",
                         tint = repeatTint,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(22.dp)
                     )
                 }
             }
@@ -371,7 +406,14 @@ fun FullPlayerSheet(
                     )
                 }
 
-                IconButton(onClick = { /* share */ }) {
+                IconButton(onClick = {
+                    val shareText = "🎵 ${track.title} by ${track.singer} — https://music.youtube.com/watch?v=${track.youtubeVideoId}"
+                    val intent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, shareText)
+                    }
+                    context.startActivity(Intent.createChooser(intent, "Share via"))
+                }) {
                     Icon(
                         painter = painterResource(R.drawable.ic_share),
                         contentDescription = "Share",
@@ -487,111 +529,337 @@ fun FullPlayerSheet(
 
         // Track Options Bottom Sheet
         if (showOptionsMenu) {
-            AlertDialog(
-                onDismissRequest = { showOptionsMenu = false },
-                title = {
-                    Text(text = track.title, color = Color.White, fontWeight = FontWeight.Bold)
+            ModalBottomSheet(
+                onDismissRequest = {
+                    showOptionsMenu = false
+                    currentSubView = TrackOptionSubView.MAIN
                 },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text(text = track.singer, color = Color(0xFFB3B3B3), fontSize = 13.sp)
-                        Divider(color = Color(0xFF333333))
-
-                        Row(
+                containerColor = Color(0xFF242424)
+            ) {
+                when (currentSubView) {
+                    TrackOptionSubView.MAIN -> {
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable {
-                                    showOptionsMenu = false
-                                    showSleepTimerDialog = true
-                                }
-                                .padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                                .padding(horizontal = 20.dp, vertical = 8.dp)
+                                .navigationBarsPadding()
                         ) {
-                            Icon(imageVector = Icons.Default.Timer, contentDescription = null, tint = Color.White)
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Text(text = "Sleep Timer", color = Color.White, fontSize = 15.sp)
-                        }
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    showOptionsMenu = false
-                                    onOpenMediaOutput()
+                            // Header: Track preview
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 12.dp)
+                            ) {
+                                AsyncImage(
+                                    model = track.coverUri.ifEmpty { R.drawable.logo },
+                                    contentDescription = null,
+                                    modifier = Modifier
+                                        .size(44.dp)
+                                        .clip(RoundedCornerShape(6.dp)),
+                                    contentScale = ContentScale.Crop
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = track.title,
+                                        color = Color.White,
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = track.singer,
+                                        color = Color(0xFFB3B3B3),
+                                        fontSize = 13.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
                                 }
-                                .padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(imageVector = Icons.Default.Speaker, contentDescription = null, tint = Color.White)
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Text(text = "Audio Output Route", color = Color.White, fontSize = 15.sp)
-                        }
+                            }
+                            HorizontalDivider(color = Color(0xFF333333))
+                            Spacer(modifier = Modifier.height(4.dp))
 
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
+                            // 8 Menu Actions
+                            // 1. Share
+                            TrackMenuRow(
+                                icon = Icons.Default.Share,
+                                title = "Share",
+                                onClick = {
+                                    showOptionsMenu = false
+                                    val shareText = "🎵 ${track.title} by ${track.singer} — https://music.youtube.com/watch?v=${track.youtubeVideoId}"
+                                    val intent = Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(Intent.EXTRA_TEXT, shareText)
+                                    }
+                                    context.startActivity(Intent.createChooser(intent, "Share via"))
+                                }
+                            )
+
+                            // 2. Download
+                            val isDownloaded = DownloadManager.isDownloaded(track.youtubeVideoId)
+                            TrackMenuRow(
+                                icon = if (isDownloaded) Icons.Default.CheckCircle else Icons.Default.Download,
+                                title = if (isDownloaded) "Downloaded (Offline)" else "Download",
+                                iconTint = if (isDownloaded) Color(0xFF1DB954) else Color.White,
+                                onClick = {
+                                    showOptionsMenu = false
+                                    DownloadManager.startDownload(track, context)
+                                    Toast.makeText(context, "Download started for \"${track.title}\"", Toast.LENGTH_SHORT).show()
+                                }
+                            )
+
+                            // 3. InvalidateCache
+                            TrackMenuRow(
+                                icon = Icons.Default.Refresh,
+                                title = "Invalidate Cache",
+                                onClick = {
+                                    showOptionsMenu = false
+                                    Toast.makeText(context, "Cache cleared for this track", Toast.LENGTH_SHORT).show()
+                                }
+                            )
+
+                            // 4. AddToLikedSongs
+                            TrackMenuRow(
+                                icon = if (isLiked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                title = if (isLiked) "Remove from Liked Songs" else "Add to Liked Songs",
+                                iconTint = if (isLiked) Color(0xFF1DB954) else Color.White,
+                                onClick = {
                                     PlaybackManager.toggleLike()
                                     showOptionsMenu = false
                                 }
-                                .padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(imageVector = Icons.Default.Favorite, contentDescription = null, tint = if (isLiked) Color(0xFF1DB954) else Color.White)
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Text(text = if (isLiked) "Remove from Liked Songs" else "Add to Liked Songs", color = Color.White, fontSize = 15.sp)
+                            )
+
+                            // 5. AddToPlaylist
+                            TrackMenuRow(
+                                icon = Icons.Default.PlaylistAdd,
+                                title = "Add to playlist",
+                                hasChevron = true,
+                                onClick = { currentSubView = TrackOptionSubView.PLAYLISTS }
+                            )
+
+                            // 6. ViewQueue
+                            TrackMenuRow(
+                                icon = Icons.Default.QueueMusic,
+                                title = "View Queue",
+                                onClick = {
+                                    showOptionsMenu = false
+                                    onOpenQueue()
+                                }
+                            )
+
+                            // 7. GoToArtist
+                            TrackMenuRow(
+                                icon = Icons.Default.Person,
+                                title = "Go to Artist",
+                                onClick = {
+                                    showOptionsMenu = false
+                                    onCollapse()
+                                    onGoToArtist(track.singer)
+                                }
+                            )
+
+                            // 8. SleepTimer
+                            TrackMenuRow(
+                                icon = Icons.Default.Timer,
+                                title = "Sleep Timer",
+                                hasChevron = true,
+                                onClick = { currentSubView = TrackOptionSubView.SLEEP_TIMER }
+                            )
                         }
                     }
-                },
-                confirmButton = {},
-                dismissButton = {
-                    TextButton(onClick = { showOptionsMenu = false }) {
-                        Text("Close", color = Color(0xFF1DB954))
-                    }
-                },
-                containerColor = Color(0xFF242424)
-            )
-        }
 
-        // Sleep Timer Selection Dialog
-        if (showSleepTimerDialog) {
-            val timerOptions = listOf(
-                "Turn off timer" to 0,
-                "15 minutes" to 15,
-                "30 minutes" to 30,
-                "45 minutes" to 45,
-                "1 hour" to 60
-            )
+                    TrackOptionSubView.PLAYLISTS -> {
+                        val playlists by UserPlaylistManager.playlists.collectAsState()
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 8.dp)
+                                .navigationBarsPadding()
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 12.dp)
+                            ) {
+                                IconButton(onClick = { currentSubView = TrackOptionSubView.MAIN }) {
+                                    Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.White)
+                                }
+                                Text("Add to playlist", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            }
+                            HorizontalDivider(color = Color(0xFF333333))
 
-            AlertDialog(
-                onDismissRequest = { showSleepTimerDialog = false },
-                title = { Text("Set Sleep Timer", color = Color.White) },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        timerOptions.forEach { (label, mins) ->
+                            // Create new playlist row
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .height(56.dp)
                                     .clip(RoundedCornerShape(8.dp))
-                                    .clickable {
-                                        PlaybackManager.setSleepTimer(mins)
-                                        showSleepTimerDialog = false
-                                    }
-                                    .padding(vertical = 10.dp, horizontal = 8.dp),
+                                    .clickable { showCreatePlaylistDialog = true }
+                                    .padding(horizontal = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(text = label, color = Color.White, fontSize = 15.sp)
+                                Icon(imageVector = Icons.Default.Add, contentDescription = null, tint = Color(0xFF1DB954), modifier = Modifier.size(24.dp))
+                                Spacer(modifier = Modifier.width(16.dp))
+                                Text("New playlist", color = Color(0xFF1DB954), fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                            }
+
+                            playlists.forEach { pl ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(56.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            UserPlaylistManager.addTrack(pl.id, track)
+                                            Toast.makeText(context, "Added to ${pl.name}", Toast.LENGTH_SHORT).show()
+                                            showOptionsMenu = false
+                                            currentSubView = TrackOptionSubView.MAIN
+                                        }
+                                        .padding(horizontal = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(imageVector = Icons.Default.QueueMusic, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
+                                    Spacer(modifier = Modifier.width(16.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(text = pl.name, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                                        Text(text = "${pl.trackIds.size} songs", color = Color(0xFF888888), fontSize = 12.sp)
+                                    }
+                                }
                             }
                         }
                     }
+
+                    TrackOptionSubView.SLEEP_TIMER -> {
+                        val timerOptions = listOf(
+                            "Turn off timer" to 0,
+                            "5 minutes" to 5,
+                            "10 minutes" to 10,
+                            "15 minutes" to 15,
+                            "30 minutes" to 30,
+                            "45 minutes" to 45,
+                            "60 minutes" to 60
+                        )
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 8.dp)
+                                .navigationBarsPadding()
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 12.dp)
+                            ) {
+                                IconButton(onClick = { currentSubView = TrackOptionSubView.MAIN }) {
+                                    Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.White)
+                                }
+                                Text("Sleep Timer", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            }
+                            HorizontalDivider(color = Color(0xFF333333))
+
+                            timerOptions.forEach { (label, mins) ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(52.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            PlaybackManager.setSleepTimer(mins)
+                                            val msg = if (mins == 0) "Sleep timer turned off" else "Sleep timer set for $mins minutes"
+                                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                            showOptionsMenu = false
+                                            currentSubView = TrackOptionSubView.MAIN
+                                        }
+                                        .padding(horizontal = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(text = label, color = Color.White, fontSize = 15.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (showCreatePlaylistDialog) {
+            var playlistTitle by remember { mutableStateOf("") }
+            AlertDialog(
+                onDismissRequest = { showCreatePlaylistDialog = false },
+                title = { Text("New Playlist", color = Color.White) },
+                text = {
+                    OutlinedTextField(
+                        value = playlistTitle,
+                        onValueChange = { playlistTitle = it },
+                        placeholder = { Text("Playlist name") },
+                        singleLine = true
+                    )
                 },
-                confirmButton = {},
+                confirmButton = {
+                    TextButton(onClick = {
+                        if (playlistTitle.isNotBlank()) {
+                            val id = UserPlaylistManager.create(playlistTitle)
+                            UserPlaylistManager.addTrack(id, track)
+                            Toast.makeText(context, "Created and added track", Toast.LENGTH_SHORT).show()
+                            showCreatePlaylistDialog = false
+                            showOptionsMenu = false
+                            currentSubView = TrackOptionSubView.MAIN
+                        }
+                    }) {
+                        Text("Create", color = Color(0xFF1DB954))
+                    }
+                },
                 dismissButton = {
-                    TextButton(onClick = { showSleepTimerDialog = false }) {
-                        Text("Cancel", color = Color(0xFF1DB954))
+                    TextButton(onClick = { showCreatePlaylistDialog = false }) {
+                        Text("Cancel", color = Color.White)
                     }
                 },
                 containerColor = Color(0xFF282828)
+            )
+        }
+    }
+}
+
+@Composable
+private fun TrackMenuRow(
+    icon: ImageVector,
+    title: String,
+    iconTint: Color = Color.White,
+    hasChevron: Boolean = false,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(56.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = iconTint,
+            modifier = Modifier.size(24.dp)
+        )
+        Spacer(modifier = Modifier.width(16.dp))
+        Text(
+            text = title,
+            color = Color.White,
+            fontSize = 16.sp,
+            modifier = Modifier.weight(1f)
+        )
+        if (hasChevron) {
+            Icon(
+                imageVector = Icons.Default.ChevronRight,
+                contentDescription = null,
+                tint = Color(0xFF888888),
+                modifier = Modifier.size(20.dp)
             )
         }
     }

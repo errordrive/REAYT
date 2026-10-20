@@ -6,6 +6,8 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.media.audiofx.BassBoost
+import android.media.audiofx.Equalizer
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.media3.common.AudioAttributes
@@ -17,6 +19,7 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.sp0.plus.data.NetworkModule
+import com.sp0.plus.data.SettingsManager
 import androidx.media3.session.CommandButton
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
@@ -27,6 +30,12 @@ import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.sp0.plus.MainActivity
 import com.sp0.plus.R
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.launch
 
 class PlaybackService : MediaSessionService() {
 
@@ -35,15 +44,48 @@ class PlaybackService : MediaSessionService() {
     var mediaSession: MediaSession? = null
         private set
 
+    var equalizer: Equalizer? = null
+        private set
+    var bassBoost: BassBoost? = null
+        private set
+
+    private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+
     companion object {
         const val CHANNEL_ID = "sp0_playback"
         const val NOTIFICATION_ID = 1001
-        const val ACTION_REPEAT = "ACTION_REPEAT"
-        const val ACTION_LIKE = "ACTION_LIKE"
+
+        const val ACTION_NEXT    = "sp0.ACTION_NEXT"
+        const val ACTION_LIKE    = "sp0.ACTION_LIKE"
+        const val ACTION_SKIP_FW = "sp0.ACTION_SKIP_FW"
+        const val ACTION_SKIP_BW = "sp0.ACTION_SKIP_BW"
+
+        val PRESET_BANDS = mapOf(
+            "Flat (Lossless)"  to shortArrayOf(0, 0, 0, 0, 0),
+            "Bass Boost"       to shortArrayOf(600, 400, 200, 0, 0),
+            "Vocal Booster"    to shortArrayOf(-200, 0, 400, 400, 200),
+            "Electronic / EDM" to shortArrayOf(400, 200, 0, 200, 500),
+            "Rock & Metal"     to shortArrayOf(300, 100, -100, 200, 300),
+            "Acoustic"         to shortArrayOf(200, 100, 0, 100, 200)
+        )
 
         @Volatile
         var instance: PlaybackService? = null
             private set
+    }
+
+    fun applyEqSettings(preset: String, bassOn: Boolean) {
+        try {
+            val eq = equalizer ?: return
+            val gains = PRESET_BANDS[preset] ?: shortArrayOf(0, 0, 0, 0, 0)
+            val numBands = eq.numberOfBands.toInt()
+            for (i in 0 until minOf(5, numBands)) {
+                eq.setBandLevel(i.toShort(), gains[i])
+            }
+            bassBoost?.setStrength(if (bassOn) 800.toShort() else 0.toShort())
+        } catch (e: Throwable) {
+            android.util.Log.w("PlaybackService", "applyEqSettings error: ${e.message}")
+        }
     }
 
     override fun onCreate() {
@@ -96,6 +138,56 @@ class PlaybackService : MediaSessionService() {
             .setSessionActivity(sessionActivityPendingIntent)
             .setCallback(CustomMediaSessionCallback())
             .build()
+
+        val commandButtons = listOf(
+            CommandButton.Builder()
+                .setDisplayName("Rewind 10s")
+                .setSessionCommand(SessionCommand(ACTION_SKIP_BW, android.os.Bundle.EMPTY))
+                .setIconResId(R.drawable.ic_player_back)
+                .build(),
+            CommandButton.Builder()
+                .setDisplayName("Previous")
+                .setPlayerCommand(Player.COMMAND_SEEK_TO_PREVIOUS)
+                .setIconResId(R.drawable.ic_player_back)
+                .build(),
+            CommandButton.Builder()
+                .setDisplayName("Next")
+                .setSessionCommand(SessionCommand(ACTION_NEXT, android.os.Bundle.EMPTY))
+                .setIconResId(R.drawable.ic_player_skip)
+                .build(),
+            CommandButton.Builder()
+                .setDisplayName("Forward 10s")
+                .setSessionCommand(SessionCommand(ACTION_SKIP_FW, android.os.Bundle.EMPTY))
+                .setIconResId(R.drawable.ic_player_skip)
+                .build(),
+            CommandButton.Builder()
+                .setDisplayName("Like")
+                .setSessionCommand(SessionCommand(ACTION_LIKE, android.os.Bundle.EMPTY))
+                .setIconResId(R.drawable.ic_sp0plus_notification)
+                .build()
+        )
+        mediaSession?.setCustomLayout(commandButtons)
+
+        try {
+            val audioSessionId = exoPlayer.audioSessionId
+            if (audioSessionId != C.AUDIO_SESSION_ID_UNSET) {
+                equalizer = Equalizer(0, audioSessionId).apply { enabled = true }
+                bassBoost = BassBoost(0, audioSessionId).apply { enabled = true }
+            }
+        } catch (e: Throwable) {
+            android.util.Log.w("PlaybackService", "Failed to init Equalizer/BassBoost: ${e.message}")
+        }
+
+        serviceScope.launch {
+            combine(
+                SettingsManager.equalizerPreset,
+                SettingsManager.bassBoostEnabled
+            ) { preset, bassOn ->
+                preset to bassOn
+            }.collect { (preset, bassOn) ->
+                applyEqSettings(preset, bassOn)
+            }
+        }
 
         try {
             setMediaNotificationProvider(
@@ -161,6 +253,14 @@ class PlaybackService : MediaSessionService() {
         if (instance == this) {
             instance = null
         }
+        serviceScope.cancel()
+        try {
+            equalizer?.release()
+            bassBoost?.release()
+        } catch (_: Throwable) {}
+        equalizer = null
+        bassBoost = null
+
         mediaSession?.run {
             player.release()
             release()
@@ -171,12 +271,34 @@ class PlaybackService : MediaSessionService() {
     }
 
     private inner class CustomMediaSessionCallback : MediaSession.Callback {
+        override fun onConnect(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo
+        ): MediaSession.ConnectionResult {
+            val connectionResult = super.onConnect(session, controller)
+            val availableSessionCommands = connectionResult.availableSessionCommands.buildUpon()
+                .add(SessionCommand(ACTION_NEXT, android.os.Bundle.EMPTY))
+                .add(SessionCommand(ACTION_LIKE, android.os.Bundle.EMPTY))
+                .add(SessionCommand(ACTION_SKIP_FW, android.os.Bundle.EMPTY))
+                .add(SessionCommand(ACTION_SKIP_BW, android.os.Bundle.EMPTY))
+                .build()
+            return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+                .setAvailableSessionCommands(availableSessionCommands)
+                .build()
+        }
+
         override fun onCustomCommand(
             session: MediaSession,
             controller: MediaSession.ControllerInfo,
             customCommand: SessionCommand,
             args: android.os.Bundle
         ): ListenableFuture<SessionResult> {
+            when (customCommand.customAction) {
+                ACTION_NEXT -> com.sp0.plus.player.PlaybackManager.skipNext()
+                ACTION_LIKE -> com.sp0.plus.player.PlaybackManager.toggleLike()
+                ACTION_SKIP_FW -> com.sp0.plus.player.PlaybackManager.skipForward10()
+                ACTION_SKIP_BW -> com.sp0.plus.player.PlaybackManager.skipBackward10()
+            }
             return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
         }
 
