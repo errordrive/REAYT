@@ -51,8 +51,11 @@ object SettingsManager {
     private val _accountTier = MutableStateFlow("Sp0+ Lossless VIP (Permanent)")
     val accountTier: StateFlow<String> = _accountTier.asStateFlow()
 
-    private val _isLoggedIn = MutableStateFlow(true)
+    private val _isLoggedIn = MutableStateFlow(false)
     val isLoggedIn: StateFlow<Boolean> = _isLoggedIn.asStateFlow()
+
+    private val _spDcCookie = MutableStateFlow("")
+    val spDcCookie: StateFlow<String> = _spDcCookie.asStateFlow()
 
     private val _equalizerPreset = MutableStateFlow("Flat (Lossless)")
     val equalizerPreset: StateFlow<String> = _equalizerPreset.asStateFlow()
@@ -79,6 +82,7 @@ object SettingsManager {
         _adblockDnsEnabled.value = prefs.getBoolean("adblock_dns_enabled", true)
 
         _isLoggedIn.value = prefs.getBoolean("is_logged_in", true)
+        _spDcCookie.value = prefs.getString("sp_dc_cookie", "") ?: ""
 
         val wifiQ = prefs.getString("wifi_quality", AudioQuality.LOSSLESS.name)
         _wifiQuality.value = try { AudioQuality.valueOf(wifiQ ?: AudioQuality.LOSSLESS.name) } catch (_: Exception) { AudioQuality.LOSSLESS }
@@ -181,13 +185,31 @@ object SettingsManager {
             .apply()
     }
 
+    fun loginWithSpDc(cookie: String) {
+        val clean = cookie.trim()
+        _spDcCookie.value = clean
+        _isLoggedIn.value = true
+        _userName.value = "Lossless VIP Member"
+        _userEmail.value = "sp0plus.session@spotify.com"
+        _accountTier.value = "Sp0+ Lossless Master (Permanent VIP)"
+        prefs.edit()
+            .putBoolean("is_logged_in", true)
+            .putString("sp_dc_cookie", clean)
+            .putString("user_name", "Lossless VIP Member")
+            .putString("user_email", "sp0plus.session@spotify.com")
+            .putString("account_tier", "Sp0+ Lossless Master (Permanent VIP)")
+            .apply()
+    }
+
     fun logout() {
         _isLoggedIn.value = false
+        _spDcCookie.value = ""
         _userName.value = "Guest User"
         _userEmail.value = "guest@sp0plus.app"
         _accountTier.value = "Free Tier"
         prefs.edit()
             .putBoolean("is_logged_in", false)
+            .putString("sp_dc_cookie", "")
             .putString("user_name", "Guest User")
             .putString("user_email", "guest@sp0plus.app")
             .putString("account_tier", "Free Tier")
