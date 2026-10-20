@@ -237,8 +237,7 @@ fun ProfileScreen(
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                                 items(topArtists) { artistTrack ->
                                     val darkenFilter = ColorFilter.colorMatrix(ColorMatrix().apply {
-                                        // Darken slightly to indicate stand-in album art
-                                        setScale(0.85f, 0.85f, 0.85f, 1.0f)
+                                        setToSaturation(0.6f)
                                     })
 
                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {

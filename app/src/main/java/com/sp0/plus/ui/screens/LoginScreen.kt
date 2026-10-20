@@ -540,7 +540,7 @@ fun LoginScreen(
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalAlignment = Alignment.Start
+                            horizontalArrangement = Arrangement.Start
                         ) {
                             IconButton(onClick = {
                                 if (isStepTwo) {

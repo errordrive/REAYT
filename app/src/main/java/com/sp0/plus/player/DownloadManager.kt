@@ -88,13 +88,13 @@ object DownloadManager {
                 }
                 val total = body.contentLength().toFloat()
                 var downloaded = 0L
-                body.source().use { source ->
-                    file.outputStream().buffered().use { sink ->
-                        val buffer = okio.Buffer()
+                val buffer = ByteArray(8192)
+                body.byteStream().use { input ->
+                    file.outputStream().buffered().use { output ->
                         while (true) {
-                            val read = source.read(buffer, 8192L)
-                            if (read == -1L) break
-                            buffer.read(sink, read)
+                            val read = input.read(buffer)
+                            if (read == -1) break
+                            output.write(buffer, 0, read)
                             downloaded += read
                             val progress = if (total > 0) downloaded / total else 0f
                             setProgress(vid, progress)
