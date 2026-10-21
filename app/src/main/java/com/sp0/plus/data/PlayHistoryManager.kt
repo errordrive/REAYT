@@ -157,4 +157,51 @@ object PlayHistoryManager {
         }
         return distinctVideoIds.size
     }
+
+    @Synchronized
+    fun restoreFromBackup(array: JSONArray) {
+        val list = mutableListOf<HistoryItem>()
+        for (i in 0 until array.length()) {
+            val obj = array.optJSONObject(i) ?: continue
+            val trackObj = obj.optJSONObject("track") ?: continue
+            val track = SongsModel(
+                id = trackObj.optString("id", ""),
+                title = trackObj.optString("title", ""),
+                album = trackObj.optString("album", ""),
+                singer = trackObj.optString("singer", ""),
+                coverUri = trackObj.optString("coverUri", ""),
+                youtubeVideoId = trackObj.optString("youtubeVideoId", ""),
+                durationMs = trackObj.optLong("durationMs", 0L),
+                audioFormat = trackObj.optString("audioFormat", ""),
+                isLiked = trackObj.optBoolean("isLiked", false)
+            )
+            val timestamp = obj.optLong("timestamp", System.currentTimeMillis())
+            list.add(HistoryItem(track, timestamp))
+        }
+        _history.value = list
+
+        val ctx = appContext ?: return
+        try {
+            val arr = JSONArray()
+            for (item in list) {
+                val obj = JSONObject()
+                obj.put("timestamp", item.timestamp)
+                val tObj = JSONObject().apply {
+                    put("id", item.track.id)
+                    put("title", item.track.title)
+                    put("album", item.track.album)
+                    put("singer", item.track.singer)
+                    put("coverUri", item.track.coverUri)
+                    put("youtubeVideoId", item.track.youtubeVideoId)
+                    put("durationMs", item.track.durationMs)
+                    put("audioFormat", item.track.audioFormat)
+                    put("isLiked", item.track.isLiked)
+                }
+                obj.put("track", tObj)
+                arr.put(obj)
+            }
+            val prefs = ctx.getSharedPreferences("sp0_play_history", Context.MODE_PRIVATE)
+            prefs.edit().putString("play_history", arr.toString()).apply()
+        } catch (_: Exception) {}
+    }
 }

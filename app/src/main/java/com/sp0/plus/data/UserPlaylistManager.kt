@@ -119,4 +119,23 @@ object UserPlaylistManager {
     fun getTrack(videoId: String): SongsModel? {
         return trackStore[videoId]
     }
+
+    @Synchronized
+    fun restoreFromBackup(array: JSONArray) {
+        val list = mutableListOf<UserPlaylist>()
+        for (i in 0 until array.length()) {
+            val obj = array.optJSONObject(i) ?: continue
+            val id = obj.optString("id", UUID.randomUUID().toString())
+            val name = obj.optString("name", "Restored Playlist")
+            val tracksArr = obj.optJSONArray("trackIds") ?: JSONArray()
+            val tIds = mutableListOf<String>()
+            for (j in 0 until tracksArr.length()) {
+                val tid = tracksArr.optString(j)
+                if (tid.isNotBlank()) tIds.add(tid)
+            }
+            list.add(UserPlaylist(id, name, tIds))
+        }
+        _playlists.value = list
+        savePlaylists()
+    }
 }

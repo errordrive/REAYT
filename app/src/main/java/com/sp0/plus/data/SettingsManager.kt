@@ -60,6 +60,9 @@ object SettingsManager {
     private val _equalizerPreset = MutableStateFlow("Flat (Lossless)")
     val equalizerPreset: StateFlow<String> = _equalizerPreset.asStateFlow()
 
+    private val _equalizerBands = MutableStateFlow(shortArrayOf(0, 0, 0, 0, 0))
+    val equalizerBands: StateFlow<ShortArray> = _equalizerBands.asStateFlow()
+
     private val _bassBoostEnabled = MutableStateFlow(true)
     val bassBoostEnabled: StateFlow<Boolean> = _bassBoostEnabled.asStateFlow()
 
@@ -74,6 +77,15 @@ object SettingsManager {
 
     private val _adblockDnsEnabled = MutableStateFlow(true)
     val adblockDnsEnabled: StateFlow<Boolean> = _adblockDnsEnabled.asStateFlow()
+
+    private val _shuffleEnabled = MutableStateFlow(false)
+    val shuffleEnabled: StateFlow<Boolean> = _shuffleEnabled.asStateFlow()
+
+    private val _repeatModeSaved = MutableStateFlow("OFF")
+    val repeatModeSaved: StateFlow<String> = _repeatModeSaved.asStateFlow()
+
+    private val _stopPlaybackEvent = MutableStateFlow(0L)
+    val stopPlaybackEvent: StateFlow<Long> = _stopPlaybackEvent.asStateFlow()
 
     fun init(context: Context) {
         prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -97,11 +109,21 @@ object SettingsManager {
         _automix.value = prefs.getBoolean("automix", true)
         _autoBackup.value = prefs.getBoolean("auto_backup", true)
         _equalizerPreset.value = prefs.getString("equalizer_preset", "Flat (Lossless)") ?: "Flat (Lossless)"
+        val bandsStr = prefs.getString("eq_bands", "0,0,0,0,0") ?: "0,0,0,0,0"
+        try {
+            val parts = bandsStr.split(",").map { it.trim().toShort() }
+            if (parts.size == 5) {
+                _equalizerBands.value = parts.toShortArray()
+            }
+        } catch (_: Exception) {}
+
         _bassBoostEnabled.value = prefs.getBoolean("bass_boost_enabled", true)
         _amoledMode.value = prefs.getBoolean("amoled_mode", true)
         _userName.value = prefs.getString("user_name", "Sp0+ Master") ?: "Sp0+ Master"
         _userEmail.value = prefs.getString("user_email", "master@sp0plus.app") ?: "master@sp0plus.app"
         _accountTier.value = prefs.getString("account_tier", "Sp0+ Lossless VIP (Permanent)") ?: "Sp0+ Lossless VIP (Permanent)"
+        _shuffleEnabled.value = prefs.getBoolean("is_shuffle", false)
+        _repeatModeSaved.value = prefs.getString("repeat_mode", "OFF") ?: "OFF"
 
         calculateCacheSize(context)
     }
@@ -162,6 +184,22 @@ object SettingsManager {
         prefs.edit().putString("equalizer_preset", preset).apply()
     }
 
+    fun setEqualizerBands(bands: ShortArray) {
+        _equalizerBands.value = bands
+        val str = bands.joinToString(",")
+        prefs.edit().putString("eq_bands", str).apply()
+    }
+
+    fun setShuffleEnabled(enabled: Boolean) {
+        _shuffleEnabled.value = enabled
+        prefs.edit().putBoolean("is_shuffle", enabled).apply()
+    }
+
+    fun setRepeatMode(mode: String) {
+        _repeatModeSaved.value = mode
+        prefs.edit().putString("repeat_mode", mode).apply()
+    }
+
     fun setBassBoostEnabled(enabled: Boolean) {
         _bassBoostEnabled.value = enabled
         prefs.edit().putBoolean("bass_boost_enabled", enabled).apply()
@@ -207,6 +245,7 @@ object SettingsManager {
         _userName.value = "Guest User"
         _userEmail.value = "guest@sp0plus.app"
         _accountTier.value = "Free Tier"
+        _stopPlaybackEvent.value = System.currentTimeMillis()
         prefs.edit()
             .putBoolean("is_logged_in", false)
             .putString("sp_dc_cookie", "")
@@ -214,6 +253,114 @@ object SettingsManager {
             .putString("user_email", "guest@sp0plus.app")
             .putString("account_tier", "Free Tier")
             .apply()
+    }
+
+    fun buildBackupJson(context: Context): String {
+        val root = org.json.JSONObject()
+        root.put("version", 1)
+        root.put("timestamp", System.currentTimeMillis())
+
+        val settingsObj = org.json.JSONObject().apply {
+            put("wifiQuality", _wifiQuality.value.name)
+            put("cellularQuality", _cellularQuality.value.name)
+            put("crossfadeEnabled", _crossfadeEnabled.value)
+            put("crossfadeDurationMs", _crossfadeDurationMs.value)
+            put("gaplessPlayback", _gaplessPlayback.value)
+            put("normalizeVolume", _normalizeVolume.value)
+            put("automix", _automix.value)
+            put("autoBackup", _autoBackup.value)
+            put("equalizerPreset", _equalizerPreset.value)
+            put("bassBoostEnabled", _bassBoostEnabled.value)
+            put("amoledMode", _amoledMode.value)
+            put("is_shuffle", _shuffleEnabled.value)
+            put("repeat_mode", _repeatModeSaved.value)
+            put("eq_bands", _equalizerBands.value.joinToString(","))
+        }
+        root.put("settings", settingsObj)
+
+        val playlistsArr = org.json.JSONArray()
+        for (pl in UserPlaylistManager.playlists.value) {
+            val pObj = org.json.JSONObject()
+            pObj.put("id", pl.id)
+            pObj.put("name", pl.name)
+            val tArr = org.json.JSONArray()
+            pl.trackIds.forEach { tArr.put(it) }
+            pObj.put("trackIds", tArr)
+            playlistsArr.put(pObj)
+        }
+        root.put("playlists", playlistsArr)
+
+        val historyArr = org.json.JSONArray()
+        for (item in PlayHistoryManager.getHistoryItems()) {
+            val hObj = org.json.JSONObject()
+            hObj.put("timestamp", item.timestamp)
+            val tObj = org.json.JSONObject().apply {
+                put("id", item.track.id)
+                put("title", item.track.title)
+                put("album", item.track.album)
+                put("singer", item.track.singer)
+                put("coverUri", item.track.coverUri)
+                put("youtubeVideoId", item.track.youtubeVideoId)
+                put("durationMs", item.track.durationMs)
+                put("audioFormat", item.track.audioFormat)
+                put("isLiked", item.track.isLiked)
+            }
+            hObj.put("track", tObj)
+            historyArr.put(hObj)
+        }
+        root.put("history", historyArr)
+
+        val likesArr = org.json.JSONArray()
+        LikesManager.likedIds.value.forEach { likesArr.put(it) }
+        root.put("likes", likesArr)
+
+        return root.toString(2)
+    }
+
+    fun restoreFromJson(context: Context, jsonStr: String): Boolean {
+        try {
+            val root = org.json.JSONObject(jsonStr)
+            val settingsObj = root.optJSONObject("settings")
+            if (settingsObj != null) {
+                settingsObj.optString("wifiQuality")?.let {
+                    try { setWifiQuality(AudioQuality.valueOf(it)) } catch (_: Exception) {}
+                }
+                settingsObj.optString("cellularQuality")?.let {
+                    try { setCellularQuality(AudioQuality.valueOf(it)) } catch (_: Exception) {}
+                }
+                if (settingsObj.has("crossfadeEnabled")) setCrossfadeEnabled(settingsObj.getBoolean("crossfadeEnabled"))
+                if (settingsObj.has("crossfadeDurationMs")) setCrossfadeDurationMs(settingsObj.getInt("crossfadeDurationMs"))
+                if (settingsObj.has("gaplessPlayback")) setGaplessPlayback(settingsObj.getBoolean("gaplessPlayback"))
+                if (settingsObj.has("normalizeVolume")) setNormalizeVolume(settingsObj.getBoolean("normalizeVolume"))
+                if (settingsObj.has("automix")) setAutomix(settingsObj.getBoolean("automix"))
+                if (settingsObj.has("autoBackup")) setAutoBackup(settingsObj.getBoolean("autoBackup"))
+                if (settingsObj.has("equalizerPreset")) setEqualizerPreset(settingsObj.getString("equalizerPreset"))
+                if (settingsObj.has("bassBoostEnabled")) setBassBoostEnabled(settingsObj.getBoolean("bassBoostEnabled"))
+                if (settingsObj.has("amoledMode")) setAmoledMode(settingsObj.getBoolean("amoledMode"))
+                if (settingsObj.has("is_shuffle")) setShuffleEnabled(settingsObj.getBoolean("is_shuffle"))
+                if (settingsObj.has("repeat_mode")) setRepeatMode(settingsObj.getString("repeat_mode"))
+                settingsObj.optString("eq_bands")?.let { bandsStr ->
+                    try {
+                        val parts = bandsStr.split(",").map { it.trim().toShort() }
+                        if (parts.size == 5) setEqualizerBands(parts.toShortArray())
+                    } catch (_: Exception) {}
+                }
+            }
+
+            root.optJSONArray("playlists")?.let {
+                UserPlaylistManager.restoreFromBackup(it)
+            }
+            root.optJSONArray("history")?.let {
+                PlayHistoryManager.restoreFromBackup(it)
+            }
+            root.optJSONArray("likes")?.let {
+                LikesManager.restoreFromBackup(it)
+            }
+            return true
+        } catch (e: Exception) {
+            android.util.Log.e("SettingsManager", "restoreFromJson failed", e)
+            return false
+        }
     }
 
     fun updateProfile(name: String, email: String) {

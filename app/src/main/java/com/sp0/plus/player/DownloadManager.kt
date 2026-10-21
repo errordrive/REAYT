@@ -1,6 +1,7 @@
 package com.sp0.plus.player
 
 import android.content.Context
+import com.sp0.plus.data.AudioStreamResolver
 import com.sp0.plus.data.NetworkModule
 import com.sp0.plus.data.YouTubeMusicClient
 import com.sp0.plus.model.SongsModel
@@ -62,7 +63,7 @@ object DownloadManager {
         downloads.value[videoId]?.localPath
 
     fun startDownload(track: SongsModel, context: Context) {
-        val vid = track.youtubeVideoId
+        val vid = track.youtubeVideoId.ifBlank { track.id }
         val current = downloads.value[vid]
         if (current?.isComplete == true || (current != null && current.progress > 0f && current.error == null)) {
             return
@@ -72,20 +73,44 @@ object DownloadManager {
 
         scope.launch {
             try {
-                val streamUrl = YouTubeMusicClient.resolveStreamUrl(vid)
-                    ?: run {
-                        setError(vid, "Could not resolve stream")
-                        return@launch
-                    }
+                val resolved = AudioStreamResolver.resolveStream(
+                    title = track.title,
+                    singer = track.singer,
+                    fallbackVideoId = track.youtubeVideoId
+                )
+                val streamUrl = resolved?.url
+                if (streamUrl.isNullOrBlank()) {
+                    setError(vid, "Could not resolve stream")
+                    return@launch
+                }
+
                 val dir = context.getExternalFilesDir("music") ?: context.filesDir
                 dir.mkdirs()
-                val file = File(dir, "$vid.m4a")
-                val request = okhttp3.Request.Builder().url(streamUrl).build()
+
+                val request = okhttp3.Request.Builder()
+                    .url(streamUrl)
+                    .header("User-Agent", NetworkModule.UA_WEB)
+                    .build()
+
                 val response = NetworkModule.playerClient.newCall(request).execute()
+                if (!response.isSuccessful) {
+                    setError(vid, "HTTP ${response.code} error")
+                    return@launch
+                }
+
                 val body = response.body ?: run {
                     setError(vid, "Empty body")
                     return@launch
                 }
+
+                val contentType = response.header("Content-Type").orEmpty().lowercase()
+                val extension = if (streamUrl.contains(".mp3", ignoreCase = true) || contentType.contains("audio/mpeg") || contentType.contains("audio/mp3")) {
+                    ".mp3"
+                } else {
+                    ".m4a"
+                }
+
+                val file = File(dir, "$vid$extension")
                 val total = body.contentLength().toFloat()
                 var downloaded = 0L
                 val buffer = ByteArray(8192)
@@ -96,7 +121,7 @@ object DownloadManager {
                             if (read == -1) break
                             output.write(buffer, 0, read)
                             downloaded += read
-                            val progress = if (total > 0) downloaded / total else 0f
+                            val progress = if (total > 0) (downloaded / total).coerceIn(0f, 1f) else 0f
                             setProgress(vid, progress)
                         }
                     }

@@ -66,7 +66,8 @@ class PlaybackService : MediaSessionService() {
             "Vocal Booster"    to shortArrayOf(-200, 0, 400, 400, 200),
             "Electronic / EDM" to shortArrayOf(400, 200, 0, 200, 500),
             "Rock & Metal"     to shortArrayOf(300, 100, -100, 200, 300),
-            "Acoustic"         to shortArrayOf(200, 100, 0, 100, 200)
+            "Acoustic"         to shortArrayOf(200, 100, 0, 100, 200),
+            "Custom"           to shortArrayOf(0, 0, 0, 0, 0)
         )
 
         @Volatile
@@ -74,10 +75,14 @@ class PlaybackService : MediaSessionService() {
             private set
     }
 
-    fun applyEqSettings(preset: String, bassOn: Boolean) {
+    fun applyEqSettings(preset: String, bassOn: Boolean, customBands: ShortArray? = null) {
         try {
             val eq = equalizer ?: return
-            val gains = PRESET_BANDS[preset] ?: shortArrayOf(0, 0, 0, 0, 0)
+            val gains = if (preset == "Custom" && customBands != null && customBands.size >= 5) {
+                customBands
+            } else {
+                PRESET_BANDS[preset] ?: shortArrayOf(0, 0, 0, 0, 0)
+            }
             val numBands = eq.numberOfBands.toInt()
             for (i in 0 until minOf(5, numBands)) {
                 eq.setBandLevel(i.toShort(), gains[i])
@@ -181,11 +186,12 @@ class PlaybackService : MediaSessionService() {
         serviceScope.launch {
             combine(
                 SettingsManager.equalizerPreset,
-                SettingsManager.bassBoostEnabled
-            ) { preset, bassOn ->
-                preset to bassOn
-            }.collect { (preset, bassOn) ->
-                applyEqSettings(preset, bassOn)
+                SettingsManager.bassBoostEnabled,
+                SettingsManager.equalizerBands
+            ) { preset, bassOn, customBands ->
+                Triple(preset, bassOn, customBands)
+            }.collect { (preset, bassOn, customBands) ->
+                applyEqSettings(preset, bassOn, customBands)
             }
         }
 
@@ -200,9 +206,10 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
-    fun playMediaItem(item: MediaItem) {
+    fun playMediaItem(item: MediaItem, token: Long? = null) {
         val p = player ?: return
         android.os.Handler(android.os.Looper.getMainLooper()).post {
+            if (token != null && com.sp0.plus.player.PlaybackManager.currentPlaybackToken != token) return@post
             try {
                 if (item.localConfiguration?.uri != null) {
                     p.setMediaItem(item)

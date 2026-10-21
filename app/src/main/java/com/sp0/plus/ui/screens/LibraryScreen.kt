@@ -25,11 +25,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.sp0.plus.R
+import com.sp0.plus.data.LikesManager
 import com.sp0.plus.data.MusicRepository
+import com.sp0.plus.data.PlayHistoryManager
 import com.sp0.plus.data.SettingsManager
 import com.sp0.plus.data.UserPlaylist
 import com.sp0.plus.data.UserPlaylistManager
 import com.sp0.plus.model.SongsModel
+import com.sp0.plus.player.DownloadManager
 import com.sp0.plus.player.PlaybackManager
 
 @Composable
@@ -41,6 +44,9 @@ fun LibraryScreen(
     val userName by SettingsManager.userName.collectAsState()
     val allTracks by MusicRepository.realTimeTracks.collectAsState()
     val userPlaylists by UserPlaylistManager.playlists.collectAsState()
+    val likedIds by LikesManager.likedIds.collectAsState()
+    val historyItems by PlayHistoryManager.history.collectAsState()
+    val downloadsMap by DownloadManager.downloadStates.collectAsState()
 
     var selectedFilter by remember { mutableStateOf("All") }
     var selectedPlaylistId by remember { mutableStateOf<String?>(null) }
@@ -48,7 +54,35 @@ fun LibraryScreen(
     var newPlaylistName by remember { mutableStateOf("") }
 
     val filterChips = listOf("All", "Playlists", "Artists", "Albums", "Downloaded")
-    val likedTracks = allTracks.filter { it.isLiked }
+
+    val allKnownTracks = remember(allTracks, historyItems) {
+        val historyTracks = historyItems.map { it.track }
+        (allTracks + historyTracks).distinctBy { it.youtubeVideoId.ifBlank { it.id } }
+    }
+
+    val likedTracks = remember(likedIds, allKnownTracks) {
+        likedIds.map { id ->
+            allKnownTracks.firstOrNull { it.youtubeVideoId == id || it.id == id }
+                ?: UserPlaylistManager.getTrack(id)
+                ?: SongsModel(id = id, title = "Liked Song ($id)", singer = "Favorite", youtubeVideoId = id, isLiked = true)
+        }
+    }
+
+    val downloadedTracks = remember(downloadsMap, allKnownTracks) {
+        downloadsMap.filter { it.value.isComplete }.keys.map { id ->
+            allKnownTracks.firstOrNull { it.youtubeVideoId == id || it.id == id }
+                ?: UserPlaylistManager.getTrack(id)
+                ?: SongsModel(id = id, title = "Downloaded Song ($id)", singer = "Offline", youtubeVideoId = id)
+        }
+    }
+
+    val displayedTracks = when (selectedFilter) {
+        "Downloaded" -> downloadedTracks
+        "Playlists" -> emptyList()
+        "Artists" -> allKnownTracks.sortedBy { it.singer }
+        "Albums" -> allKnownTracks.sortedBy { it.album }
+        else -> allKnownTracks
+    }
 
     val selectedPlaylist = userPlaylists.firstOrNull { it.id == selectedPlaylistId }
 
@@ -351,7 +385,7 @@ fun LibraryScreen(
                     modifier = Modifier.fillMaxSize()
                 ) {
                     // "Your Playlists" section
-                    if (userPlaylists.isNotEmpty()) {
+                    if ((selectedFilter == "All" || selectedFilter == "Playlists") && userPlaylists.isNotEmpty()) {
                         item {
                             Column {
                                 Text(
@@ -374,58 +408,78 @@ fun LibraryScreen(
                     }
 
                     // Liked Songs Pinned Item
-                    item {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable {
-                                    if (likedTracks.isNotEmpty()) {
-                                        PlaybackManager.playTrack(likedTracks.first(), likedTracks)
+                    if (selectedFilter == "All" || selectedFilter == "Playlists") {
+                        item {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        if (likedTracks.isNotEmpty()) {
+                                            PlaybackManager.playTrack(likedTracks.first(), likedTracks)
+                                        }
                                     }
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(60.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(
+                                            Brush.linearGradient(
+                                                colors = listOf(Color(0xFF450AF5), Color(0xFFC4EFD9))
+                                            )
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        painter = painterResource(R.drawable.added),
+                                        contentDescription = "Liked Songs",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(28.dp)
+                                    )
                                 }
-                                .padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+
+                                Spacer(modifier = Modifier.width(14.dp))
+
+                                Column {
+                                    Text(
+                                        text = "Liked Songs",
+                                        color = Color.White,
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = "Playlist • ${likedTracks.size} songs",
+                                        color = Color(0xFFB3B3B3),
+                                        fontSize = 12.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (selectedFilter == "Downloaded" && displayedTracks.isEmpty()) {
+                        item {
                             Box(
                                 modifier = Modifier
-                                    .size(60.dp)
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(
-                                        Brush.linearGradient(
-                                            colors = listOf(Color(0xFF450AF5), Color(0xFFC4EFD9))
-                                        )
-                                    ),
+                                    .fillMaxWidth()
+                                    .padding(top = 48.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(
-                                    painter = painterResource(R.drawable.added),
-                                    contentDescription = "Liked Songs",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(28.dp)
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.width(14.dp))
-
-                            Column {
                                 Text(
-                                    text = "Liked Songs",
-                                    color = Color.White,
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = "Playlist • ${likedTracks.size} songs",
-                                    color = Color(0xFFB3B3B3),
-                                    fontSize = 12.sp
+                                    text = "No downloaded tracks yet.\nDownload songs to listen offline.",
+                                    color = Color(0xFF888888),
+                                    fontSize = 14.sp,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                 )
                             }
                         }
                     }
 
-                    // Other Library Tracks
-                    items(allTracks) { track ->
+                    // Displayed Tracks
+                    items(displayedTracks) { track ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()

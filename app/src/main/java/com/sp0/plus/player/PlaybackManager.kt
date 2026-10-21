@@ -5,6 +5,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import com.sp0.plus.data.AudioStreamResolver
+import com.sp0.plus.data.LikesManager
 import com.sp0.plus.data.MusicRepository
 import com.sp0.plus.data.NetworkModule
 import com.sp0.plus.data.PlayHistoryManager
@@ -25,6 +26,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicLong
 
 enum class RepeatMode {
     OFF, ONE, ALL
@@ -39,10 +41,19 @@ object PlaybackManager {
     private var progressJob: Job? = null
     private var streamJob: Job? = null
     private var retryJob: Job? = null
+    private var crossfadeJob: Job? = null
+
+    private val playbackToken = AtomicLong(0L)
+    val currentPlaybackToken: Long get() = playbackToken.get()
+
+    private var pendingFadeIn = false
+    private var isCrossfading = false
+    private var isSeeking = false
 
     private val _streamError = MutableStateFlow<String?>(null)
     val streamError: StateFlow<String?> = _streamError.asStateFlow()
-    private var mediaController: MediaController? = null
+    var mediaController: MediaController? = null
+        private set
 
     private val _currentTrack = MutableStateFlow<SongsModel?>(null)
     val currentTrack: StateFlow<SongsModel?> = _currentTrack.asStateFlow()
@@ -68,10 +79,16 @@ object PlaybackManager {
     private val _currentIndex = MutableStateFlow(0)
     val currentIndex: StateFlow<Int> = _currentIndex.asStateFlow()
 
-    private val _repeatMode = MutableStateFlow(RepeatMode.OFF)
+    private val _repeatMode = MutableStateFlow(
+        try {
+            RepeatMode.valueOf(SettingsManager.repeatModeSaved.value.ifBlank { "OFF" })
+        } catch (_: Exception) {
+            RepeatMode.OFF
+        }
+    )
     val repeatMode: StateFlow<RepeatMode> = _repeatMode.asStateFlow()
 
-    private val _isShuffle = MutableStateFlow(false)
+    private val _isShuffle = MutableStateFlow(SettingsManager.shuffleEnabled.value)
     val isShuffle: StateFlow<Boolean> = _isShuffle.asStateFlow()
 
     private val _isLiked = MutableStateFlow(false)
@@ -138,6 +155,20 @@ object PlaybackManager {
         if (isPlaying) {
             _isPending.value = false
             _isBuffering.value = false
+            if (pendingFadeIn) {
+                pendingFadeIn = false
+                scope.launch {
+                    val upSteps = (300L / 50L).coerceAtLeast(1L)
+                    for (i in 0 until upSteps) {
+                        val vol = (i.toFloat() / upSteps.toFloat())
+                        PlaybackService.instance?.player?.volume = vol
+                        delay(50L)
+                    }
+                    PlaybackService.instance?.player?.volume = 1f
+                }
+            } else if (!isCrossfading) {
+                PlaybackService.instance?.player?.volume = 1f
+            }
         }
     }
 
@@ -178,11 +209,12 @@ object PlaybackManager {
                 val activePlayer = PlaybackService.instance?.player ?: mediaController
                 if (activePlayer != null && activePlayer.isPlaying) {
                     val pos = activePlayer.currentPosition.coerceAtLeast(0L)
-                    _positionMs.value = pos
-                    val dur = activePlayer.duration
-                    if (dur > 0) _durationMs.value = dur
-
-                    updateActiveLyricIndex(pos)
+                    if (!isSeeking) {
+                        _positionMs.value = pos
+                        val dur = activePlayer.duration
+                        if (dur > 0) _durationMs.value = dur
+                        updateActiveLyricIndex(pos)
+                    }
                 }
                 delay(250L)
             }
@@ -199,6 +231,24 @@ object PlaybackManager {
 
     fun playTrack(track: SongsModel, newQueue: List<SongsModel>? = null) {
         try {
+            val myToken = playbackToken.incrementAndGet()
+
+            retryJob?.cancel()
+            streamJob?.cancel()
+            crossfadeJob?.cancel()
+            isCrossfading = false
+            pendingFadeIn = false
+
+            PlaybackService.instance?.player?.let { p ->
+                p.stop()
+                p.clearMediaItems()
+                p.volume = 1f
+            }
+            mediaController?.let { c ->
+                c.stop()
+                c.clearMediaItems()
+            }
+
             if (newQueue != null && newQueue.isNotEmpty()) {
                 _queue.value = newQueue
                 _currentIndex.value = newQueue.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
@@ -212,10 +262,11 @@ object PlaybackManager {
                 }
             }
 
+            val trackId = track.youtubeVideoId.ifBlank { track.id }
             _currentTrack.value = track
             _durationMs.value = if (track.durationMs > 0) track.durationMs else 180000L
             _positionMs.value = 0L
-            _isLiked.value = track.isLiked
+            _isLiked.value = LikesManager.isLiked(trackId)
             _audioQualityBadge.value = track.audioFormat.takeIf { !it.contains("YOUTUBE", ignoreCase = true) && it.isNotBlank() } ?: "LOSSLESS • FLAC"
             _lyricsLines.value = emptyList()
             _activeLyricIndex.value = 0
@@ -224,10 +275,10 @@ object PlaybackManager {
             _isPending.value = true
             _isBuffering.value = true
 
-            retryJob?.cancel()
-            streamJob?.cancel()
             streamJob = scope.launch {
                 try {
+                    if (playbackToken.get() != myToken) return@launch
+
                     var streamUrl = track.url
                     var badge = _audioQualityBadge.value
 
@@ -251,6 +302,8 @@ object PlaybackManager {
                         }
                     }
 
+                    if (playbackToken.get() != myToken) return@launch
+
                     _audioQualityBadge.value = badge
 
                     if (streamUrl.isBlank()) {
@@ -262,7 +315,7 @@ object PlaybackManager {
                     }
                     _streamError.value = null
 
-                    executePlayback(track, streamUrl)
+                    executePlayback(track, streamUrl, myToken)
                     PlayHistoryManager.recordPlay(track)
 
                     scope.launch(Dispatchers.IO) {
@@ -286,11 +339,13 @@ object PlaybackManager {
                         }
                     }
                 } catch (e: Throwable) {
-                    android.util.Log.e("PlaybackManager", "Playback stream error: ${e.message}", e)
-                    _isPending.value = false
-                    _isBuffering.value = false
-                    _isPlaying.value = false
-                    _streamError.value = "Playback error: ${e.message}"
+                    if (playbackToken.get() == myToken) {
+                        android.util.Log.e("PlaybackManager", "Playback stream error: ${e.message}", e)
+                        _isPending.value = false
+                        _isBuffering.value = false
+                        _isPlaying.value = false
+                        _streamError.value = "Playback error: ${e.message}"
+                    }
                 }
             }
         } catch (e: Throwable) {
@@ -298,13 +353,16 @@ object PlaybackManager {
         }
     }
 
-    private fun executePlayback(track: SongsModel, streamUrl: String) {
+    private fun executePlayback(track: SongsModel, streamUrl: String, token: Long) {
         try {
+            if (playbackToken.get() != token) return
+
             val uri = android.net.Uri.parse(streamUrl)
             val mediaMetadata = MediaMetadata.Builder()
                 .setTitle(track.title)
                 .setArtist(track.singer)
                 .setAlbumTitle(track.album)
+                .setArtworkUri(if (track.coverUri.isNotBlank()) android.net.Uri.parse(track.coverUri) else null)
                 .build()
 
             val mediaItem = MediaItem.Builder()
@@ -322,7 +380,8 @@ object PlaybackManager {
             val srv = PlaybackService.instance
             if (srv?.player != null) {
                 try {
-                    srv.playMediaItem(mediaItem)
+                    if (playbackToken.get() != token) return
+                    srv.playMediaItem(mediaItem, token)
                     return
                 } catch (e: Throwable) {
                     android.util.Log.e("PlaybackManager", "Direct playMediaItem failed", e)
@@ -333,6 +392,7 @@ object PlaybackManager {
             if (mediaController != null) {
                 mediaController?.let { controller ->
                     try {
+                        if (playbackToken.get() != token) return
                         controller.setMediaItem(mediaItem)
                         controller.prepare()
                         controller.play()
@@ -346,15 +406,19 @@ object PlaybackManager {
                 retryJob?.cancel()
                 retryJob = scope.launch {
                     delay(400L)
-                    executePlayback(track, streamUrl)
+                    if (playbackToken.get() == token) {
+                        executePlayback(track, streamUrl, token)
+                    }
                 }
             }
         } catch (e: Throwable) {
-            android.util.Log.e("PlaybackManager", "executePlayback unexpected error: ${e.message}", e)
-            _isPending.value = false
-            _isPlaying.value = false
-            _isBuffering.value = false
-            _streamError.value = "Playback error: ${e.message}"
+            if (playbackToken.get() == token) {
+                android.util.Log.e("PlaybackManager", "executePlayback unexpected error: ${e.message}", e)
+                _isPending.value = false
+                _isPlaying.value = false
+                _isBuffering.value = false
+                _streamError.value = "Playback error: ${e.message}"
+            }
         }
     }
 
@@ -362,6 +426,12 @@ object PlaybackManager {
         val activePlayer = PlaybackService.instance?.player ?: mediaController
         if (activePlayer != null) {
             if (activePlayer.isPlaying) {
+                if (isCrossfading) {
+                    crossfadeJob?.cancel()
+                    isCrossfading = false
+                    pendingFadeIn = false
+                    PlaybackService.instance?.player?.volume = 1f
+                }
                 activePlayer.pause()
                 _isPlaying.value = false
             } else {
@@ -369,6 +439,9 @@ object PlaybackManager {
                 if (activePlayer.playbackState == Player.STATE_IDLE && track != null) {
                     playTrack(track)
                 } else {
+                    if (!pendingFadeIn && !isCrossfading) {
+                        PlaybackService.instance?.player?.volume = 1f
+                    }
                     activePlayer.play()
                     _isPlaying.value = true
                 }
@@ -423,27 +496,37 @@ object PlaybackManager {
     }
 
     fun seekTo(posMs: Long) {
+        isSeeking = true
         val clamped = posMs.coerceIn(0L, _durationMs.value)
         _positionMs.value = clamped
         updateActiveLyricIndex(clamped)
         PlaybackService.instance?.player?.seekTo(clamped) ?: mediaController?.seekTo(clamped)
+        scope.launch {
+            delay(300L)
+            isSeeking = false
+        }
     }
 
     fun toggleRepeat() {
-        _repeatMode.value = when (_repeatMode.value) {
+        val newMode = when (_repeatMode.value) {
             RepeatMode.OFF -> RepeatMode.ALL
             RepeatMode.ALL -> RepeatMode.ONE
             RepeatMode.ONE -> RepeatMode.OFF
         }
+        _repeatMode.value = newMode
+        SettingsManager.setRepeatMode(newMode.name)
     }
 
     fun toggleShuffle() {
-        _isShuffle.value = !_isShuffle.value
+        val newShuffle = !_isShuffle.value
+        _isShuffle.value = newShuffle
+        SettingsManager.setShuffleEnabled(newShuffle)
     }
 
     fun toggleLike() {
         val track = _currentTrack.value ?: return
-        val newLiked = !_isLiked.value
+        val trackId = track.youtubeVideoId.ifBlank { track.id }
+        val newLiked = LikesManager.toggleLike(trackId)
         _isLiked.value = newLiked
 
         // Update in queue
@@ -456,21 +539,20 @@ object PlaybackManager {
     private fun executeCrossfadeThenSkip() {
         if (SettingsManager.crossfadeEnabled.value) {
             val crossfadeDurationMs = SettingsManager.crossfadeDurationMs.value
-            scope.launch {
+            crossfadeJob?.cancel()
+            crossfadeJob = scope.launch {
+                isCrossfading = true
                 val steps = (crossfadeDurationMs / 50L).coerceAtLeast(1L)
                 for (i in 0 until steps) {
+                    if (!isCrossfading) break
                     val vol = 1f - (i.toFloat() / steps.toFloat())
                     PlaybackService.instance?.player?.volume = vol
                     delay(50L)
                 }
+                pendingFadeIn = true
+                PlaybackService.instance?.player?.volume = 0f
+                isCrossfading = false
                 skipNext()
-                val upSteps = (300L / 50L).coerceAtLeast(1L)
-                for (i in 0 until upSteps) {
-                    val vol = (i.toFloat() / upSteps.toFloat())
-                    PlaybackService.instance?.player?.volume = vol
-                    delay(50L)
-                }
-                PlaybackService.instance?.player?.volume = 1f
             }
         } else {
             skipNext()

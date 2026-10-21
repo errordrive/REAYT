@@ -1,5 +1,7 @@
 package com.sp0.plus.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -51,6 +53,7 @@ fun SettingsScreen(
     val automix by SettingsManager.automix.collectAsState()
     val autoBackup by SettingsManager.autoBackup.collectAsState()
     val equalizerPreset by SettingsManager.equalizerPreset.collectAsState()
+    val equalizerBands by SettingsManager.equalizerBands.collectAsState()
     val bassBoostEnabled by SettingsManager.bassBoostEnabled.collectAsState()
     val amoledMode by SettingsManager.amoledMode.collectAsState()
     val userName by SettingsManager.userName.collectAsState()
@@ -58,11 +61,43 @@ fun SettingsScreen(
     val accountTier by SettingsManager.accountTier.collectAsState()
     val cacheSize by SettingsManager.cacheSizeFormatted.collectAsState()
 
-    val visitorData by SettingsManager.visitorData.collectAsState()
-    val adblockDns by SettingsManager.adblockDnsEnabled.collectAsState()
-    var visitorInput by remember(visitorData) { mutableStateOf(visitorData) }
-    var fetchingVisitor by remember { mutableStateOf(false) }
     val uiScope = rememberCoroutineScope()
+
+    val backupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val json = SettingsManager.buildBackupJson(context)
+                context.contentResolver.openOutputStream(uri)?.use { os ->
+                    os.write(json.toByteArray(Charsets.UTF_8))
+                }
+                Toast.makeText(context, "Backup saved successfully", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(context, "Backup failed: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    val restoreLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val json = context.contentResolver.openInputStream(uri)?.use { input ->
+                    input.bufferedReader().readText()
+                } ?: ""
+                val success = SettingsManager.restoreFromJson(context, json)
+                if (success) {
+                    Toast.makeText(context, "Restored successfully from file", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, "Invalid backup file", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, "Restore failed: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
 
     var showQualityDialogFor by remember { mutableStateOf<String?>(null) }
     var showEqualizerDialog by remember { mutableStateOf(false) }
@@ -292,90 +327,6 @@ fun SettingsScreen(
                     }
                 }
 
-                // Streaming Engine Section
-                item {
-                    SettingsSectionTitle("STREAMING ENGINE")
-
-                    SettingsCard {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text(
-                                text = "X-Goog-Visitor-Id",
-                                color = Color.White,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                            Text(
-                                text = "Session token for streaming metadata. Paste yours or generate a fresh anonymous token.",
-                                color = Color(0xFF888888),
-                                fontSize = 12.sp
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            OutlinedTextField(
-                                value = visitorInput,
-                                onValueChange = { visitorInput = it },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedTextColor = Color.White,
-                                    unfocusedTextColor = Color.White,
-                                    focusedBorderColor = Color(0xFF1DB954),
-                                    unfocusedBorderColor = Color(0xFF444444)
-                                )
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(
-                                    onClick = {
-                                        SettingsManager.setVisitorData(visitorInput)
-                                        Toast.makeText(context, "Visitor ID saved", Toast.LENGTH_SHORT).show()
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1DB954))
-                                ) { Text("Save", color = Color.Black, fontSize = 12.sp) }
-
-                                Button(
-                                    enabled = !fetchingVisitor,
-                                    onClick = {
-                                        fetchingVisitor = true
-                                        uiScope.launch {
-                                            val fresh = YouTubeMusicClient.fetchVisitorData()
-                                            fetchingVisitor = false
-                                            if (fresh != null) {
-                                                SettingsManager.setVisitorData(fresh)
-                                                Toast.makeText(context, "New Visitor ID generated", Toast.LENGTH_SHORT).show()
-                                            } else {
-                                                Toast.makeText(context, "Couldn't generate one. Check your connection.", Toast.LENGTH_LONG).show()
-                                            }
-                                        }
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333))
-                                ) { Text(if (fetchingVisitor) "Generating..." else "Generate", color = Color.White, fontSize = 12.sp) }
-                            }
-                        }
-
-                        SettingsSwitchRow(
-                            title = "Ad-blocking DNS (in-app)",
-                            subtitle = "Resolve this app's traffic through AdGuard DNS (DNS-over-HTTPS)",
-                            checked = adblockDns,
-                            onCheckedChange = { SettingsManager.setAdblockDnsEnabled(it) }
-                        )
-
-                        SettingsClickableRow(
-                            title = "System Private DNS",
-                            subtitle = "Copies ${NetworkModule.PRIVATE_DNS_HOSTNAME}, then opens network settings. Choose Private DNS > provider hostname and paste.",
-                            onClick = {
-                                val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                cm.setPrimaryClip(ClipData.newPlainText("Private DNS", NetworkModule.PRIVATE_DNS_HOSTNAME))
-                                Toast.makeText(context, "Hostname copied. Paste it under Private DNS.", Toast.LENGTH_LONG).show()
-                                try {
-                                    context.startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                                } catch (_: Exception) {
-                                    context.startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                                }
-                            }
-                        )
-                    }
-                }
-
                 // Display & Theme Section
                 item {
                     SettingsSectionTitle("DISPLAY & THEME")
@@ -443,7 +394,9 @@ fun SettingsScreen(
                         SettingsClickableRow(
                             title = "Back Up Now",
                             subtitle = "Export current playlists, history, and settings",
-                            onClick = {}
+                            onClick = {
+                                backupLauncher.launch("sp0_backup_${System.currentTimeMillis()}.json")
+                            }
                         )
 
                         Divider(color = Color(0xFF333333))
@@ -451,7 +404,9 @@ fun SettingsScreen(
                         SettingsClickableRow(
                             title = "Restore from File",
                             subtitle = "Import a previous Sp0+ backup file",
-                            onClick = {}
+                            onClick = {
+                                restoreLauncher.launch("application/json")
+                            }
                         )
                     }
                 }
@@ -586,14 +541,20 @@ fun SettingsScreen(
                 "Vocal Booster" to "Crisp, elevated midrange for podcasts and acoustic",
                 "Electronic / EDM" to "Dynamic treble and punchy sub-bass",
                 "Rock & Metal" to "Aggressive guitar drive and energetic rhythm",
-                "Acoustic" to "Warm and balanced organic instrument profile"
+                "Acoustic" to "Warm and balanced organic instrument profile",
+                "Custom" to "Custom 5-band frequency profile"
             )
 
             AlertDialog(
                 onDismissRequest = { showEqualizerDialog = false },
                 title = { Text(text = "Equalizer & Sound Effects", color = Color.White) },
                 text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(androidx.compose.foundation.rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -649,6 +610,55 @@ fun SettingsScreen(
                                             contentDescription = null,
                                             tint = Color(0xFF1DB954),
                                             modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        if (equalizerPreset == "Custom") {
+                            Divider(color = Color(0xFF333333))
+                            val bandLabels = listOf("60 Hz", "230 Hz", "910 Hz", "3.6 kHz", "14 kHz")
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0xFF1A1A1A))
+                                    .padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Text(
+                                    text = "CUSTOM 5-BAND FREQUENCY LEVELS",
+                                    color = Color(0xFF1DB954),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                bandLabels.forEachIndexed { index, label ->
+                                    val level = equalizerBands.getOrElse(index) { 0.toShort() }.toFloat()
+                                    Column {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Text(text = label, color = Color.White, fontSize = 12.sp)
+                                            val db = (level / 100).toInt()
+                                            Text(text = "${if (db > 0) "+$db" else "$db"} dB", color = Color(0xFF888888), fontSize = 12.sp)
+                                        }
+                                        Slider(
+                                            value = level,
+                                            onValueChange = { newVal ->
+                                                val updated = equalizerBands.copyOf()
+                                                if (index < updated.size) {
+                                                    updated[index] = newVal.toInt().toShort()
+                                                    SettingsManager.setEqualizerBands(updated)
+                                                }
+                                            },
+                                            valueRange = -1000f..1000f,
+                                            colors = SliderDefaults.colors(
+                                                thumbColor = Color(0xFF1DB954),
+                                                activeTrackColor = Color(0xFF1DB954),
+                                                inactiveTrackColor = Color(0xFF404040)
+                                            )
                                         )
                                     }
                                 }

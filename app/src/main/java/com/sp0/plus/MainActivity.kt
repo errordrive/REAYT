@@ -100,6 +100,22 @@ enum class NavigationTab {
 @Composable
 fun MainAppShell() {
     val isLoggedIn by SettingsManager.isLoggedIn.collectAsState()
+    val stopPlaybackEvent by SettingsManager.stopPlaybackEvent.collectAsState()
+
+    LaunchedEffect(stopPlaybackEvent) {
+        if (stopPlaybackEvent > 0L) {
+            PlaybackService.instance?.player?.let { p ->
+                p.stop()
+                p.clearMediaItems()
+            }
+            PlaybackManager.mediaController?.let { c ->
+                c.stop()
+                c.clearMediaItems()
+            }
+            PlaybackManager.updateIsPlaying(false)
+            PlaybackManager.updatePlaybackState(androidx.media3.common.Player.STATE_IDLE)
+        }
+    }
 
     if (!isLoggedIn) {
         LoginScreen(

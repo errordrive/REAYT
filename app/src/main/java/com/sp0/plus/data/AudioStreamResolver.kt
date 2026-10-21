@@ -24,8 +24,8 @@ object AudioStreamResolver {
 
     /**
      * Resolves a direct, unthrottled studio-grade audio stream URL.
-     * Prioritizes 320 kbps Akamai/Cloudflare master streams via JioSaavn,
-     * seamlessly falling back to YouTube Music streams if needed.
+     * Prioritizes the known YouTube video ID if provided, seamlessly falling back
+     * to JioSaavn 320 kbps master streams, and finally dynamic YouTube search.
      */
     suspend fun resolveStream(
         title: String,
@@ -38,29 +38,9 @@ object AudioStreamResolver {
 
         Log.d(TAG, "Resolving master stream for query: '$query' (fallbackId: $fallbackVideoId)")
 
-        // 1. Try JioSaavn direct search.getResults
-        val saavnResult = searchSaavn(query) ?: searchSaavn(cleanTitle)
-        if (saavnResult != null && saavnResult.isNotBlank()) {
-            Log.d(TAG, "Successfully resolved Saavn 320kbps master stream: $saavnResult")
-            return@withContext ResolvedAudioStream(
-                url = saavnResult,
-                audioBadge = "LOSSLESS • 320 KBPS"
-            )
-        }
-
-        // 2. Try JioSaavn autocomplete fallback
-        val saavnAuto = autocompleteSaavn(query) ?: autocompleteSaavn(cleanTitle)
-        if (saavnAuto != null && saavnAuto.isNotBlank()) {
-            Log.d(TAG, "Successfully resolved Saavn autocomplete master stream: $saavnAuto")
-            return@withContext ResolvedAudioStream(
-                url = saavnAuto,
-                audioBadge = "LOSSLESS • 320 KBPS"
-            )
-        }
-
-        // 3. Fall back to YouTube stream resolution if videoId is known
+        // Step 1 — If fallbackVideoId is not blank, resolve direct YouTube stream
         if (fallbackVideoId.isNotBlank()) {
-            Log.d(TAG, "Falling back to YouTube stream resolution for videoId: $fallbackVideoId")
+            Log.d(TAG, "Resolving stream for known videoId: $fallbackVideoId")
             val ytStream = YouTubeMusicClient.resolveStreamUrl(fallbackVideoId)
             if (!ytStream.isNullOrBlank()) {
                 return@withContext ResolvedAudioStream(
@@ -70,13 +50,37 @@ object AudioStreamResolver {
             }
         }
 
-        // 4. Fall back to searching YouTube dynamically
+        // Step 2 — JioSaavn direct search
+        val saavnDirectQuery = "$cleanTitle $cleanArtist".trim()
+        var saavnResult = searchSaavn(saavnDirectQuery)
+        if ((saavnResult == null || saavnResult.isBlank()) && cleanTitle.isNotBlank()) {
+            saavnResult = searchSaavn(cleanTitle)
+        }
+        if (!saavnResult.isNullOrBlank()) {
+            Log.d(TAG, "Successfully resolved Saavn 320kbps master stream: $saavnResult")
+            return@withContext ResolvedAudioStream(
+                url = saavnResult,
+                audioBadge = "LOSSLESS • 320 KBPS"
+            )
+        }
+
+        // Step 3 — JioSaavn autocomplete
+        val saavnAuto = autocompleteSaavn(saavnDirectQuery)
+        if (!saavnAuto.isNullOrBlank()) {
+            Log.d(TAG, "Successfully resolved Saavn autocomplete master stream: $saavnAuto")
+            return@withContext ResolvedAudioStream(
+                url = saavnAuto,
+                audioBadge = "LOSSLESS • 320 KBPS"
+            )
+        }
+
+        // Step 4 — Dynamic YouTube search (last resort only)
         if (query.isNotBlank()) {
             Log.d(TAG, "Falling back to dynamic YouTube search for: $query")
             val ytSongs = YouTubeMusicClient.searchSongs(query)
-            val topMatch = ytSongs.firstOrNull { it.youtubeVideoId.isNotBlank() }
-            if (topMatch != null) {
-                val stream = YouTubeMusicClient.resolveStreamUrl(topMatch.youtubeVideoId)
+            val candidate = ytSongs.firstOrNull { it.youtubeVideoId.isNotBlank() && it.youtubeVideoId != fallbackVideoId }
+            if (candidate != null) {
+                val stream = YouTubeMusicClient.resolveStreamUrl(candidate.youtubeVideoId)
                 if (!stream.isNullOrBlank()) {
                     return@withContext ResolvedAudioStream(
                         url = stream,
