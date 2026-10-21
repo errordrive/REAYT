@@ -62,6 +62,8 @@ fun FullPlayerSheet(
     val lyricsLines by PlaybackManager.lyricsLines.collectAsState()
     val activeLyricIndex by PlaybackManager.activeLyricIndex.collectAsState()
     val sleepTimerSeconds by PlaybackManager.sleepTimerSeconds.collectAsState()
+    val isPending by PlaybackManager.isPending.collectAsState()
+    val isBuffering by PlaybackManager.isBuffering.collectAsState()
 
     var showFullLyrics by remember { mutableStateOf(false) }
     var showOptionsMenu by remember { mutableStateOf(false) }
@@ -323,12 +325,20 @@ fun FullPlayerSheet(
                         .clickable { PlaybackManager.togglePlayPause() }
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = if (isPlaying) "Pause" else "Play",
-                            tint = Color.Black,
-                            modifier = Modifier.size(32.dp)
-                        )
+                        if (isPending || isBuffering) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(30.dp),
+                                color = Color.Black,
+                                strokeWidth = 3.dp
+                            )
+                        } else {
+                            Icon(
+                                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = if (isPlaying) "Pause" else "Play",
+                                tint = Color.Black,
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
                     }
                 }
 

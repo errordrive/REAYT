@@ -69,6 +69,17 @@ object PlaybackManager {
     private val _currentTrack = MutableStateFlow<SongsModel?>(null)
     val currentTrack: StateFlow<SongsModel?> = _currentTrack.asStateFlow()
 
+    private val _isPlayerExpanded = MutableStateFlow(false)
+    val isPlayerExpanded: StateFlow<Boolean> = _isPlayerExpanded.asStateFlow()
+
+    fun expandPlayer() {
+        _isPlayerExpanded.value = true
+    }
+
+    fun collapsePlayer() {
+        _isPlayerExpanded.value = false
+    }
+
     private val _isPending = MutableStateFlow(false)
     val isPending: StateFlow<Boolean> = _isPending.asStateFlow()
 
@@ -402,6 +413,7 @@ object PlaybackManager {
             isCrossfading = false
             isEndingTransition = false
             DualSpeakerManager.stop()
+            _isPlayerExpanded.value = true
 
             val shouldFadeIn = pendingFadeIn || SettingsManager.fadeEffectsEnabled.value || (SettingsManager.crossfadeEnabled.value && SettingsManager.crossfadeDurationMs.value > 0)
             pendingFadeIn = shouldFadeIn

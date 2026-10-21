@@ -37,6 +37,8 @@ fun MiniPlayer(
 ) {
     val isLiked by PlaybackManager.isLiked.collectAsState()
     val audioQualityBadge by PlaybackManager.audioQualityBadge.collectAsState()
+    val isPending by PlaybackManager.isPending.collectAsState()
+    val isBuffering by PlaybackManager.isBuffering.collectAsState()
 
     val progressFraction = if (durationMs > 0) {
         (progressMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
@@ -134,17 +136,25 @@ fun MiniPlayer(
                     )
                 }
 
-                // Play / Pause Button
+                // Play / Pause Button with Loading Indicator
                 IconButton(
                     onClick = { PlaybackManager.togglePlayPause() },
                     modifier = Modifier.size(40.dp)
                 ) {
-                    Icon(
-                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        contentDescription = if (isPlaying) "Pause" else "Play",
-                        tint = Color.White,
-                        modifier = Modifier.size(26.dp)
-                    )
+                    if (isPending || isBuffering) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            color = Color.White,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            contentDescription = if (isPlaying) "Pause" else "Play",
+                            tint = Color.White,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
                 }
             }
 

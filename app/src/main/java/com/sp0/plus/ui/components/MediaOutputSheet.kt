@@ -276,13 +276,13 @@ fun MediaOutputSheet(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Both Speakers for Sound",
+                                    text = "Virtual Stereo (Dual Speaker)",
                                     color = Color.White,
                                     fontSize = 15.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
-                                    text = "Plays through both the main speaker and the ear speaker simultaneously",
+                                    text = "Earpiece (Left channel) + Loudspeaker (Right channel)",
                                     color = Color(0xFF888888),
                                     fontSize = 12.sp
                                 )

@@ -117,7 +117,7 @@ class PlaybackService : MediaSessionService() {
         )
 
         DualSpeakerManager.init(this)
-        DualSpeakerManager.isEnabled = SettingsManager.bothSpeakersEnabled.value
+        DualSpeakerManager.isVirtualStereoEnabled = SettingsManager.bothSpeakersEnabled.value
 
         val renderersFactory = object : DefaultRenderersFactory(this) {
             override fun buildAudioSink(

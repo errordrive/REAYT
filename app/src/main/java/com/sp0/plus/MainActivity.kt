@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
@@ -15,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -127,11 +129,35 @@ fun MainAppShell() {
     }
 
     var selectedTab by remember { mutableStateOf(NavigationTab.HOME) }
-    var isPlayerExpanded by remember { mutableStateOf(false) }
+    val isPlayerExpanded by PlaybackManager.isPlayerExpanded.collectAsState()
     var isQueueOpen by remember { mutableStateOf(false) }
     var isMediaOutputOpen by remember { mutableStateOf(false) }
     var isSettingsOpen by remember { mutableStateOf(false) }
     var isProfileOpen by remember { mutableStateOf(false) }
+
+    var lastBackPressTime by remember { mutableLongStateOf(0L) }
+    val context = LocalContext.current
+
+    // Android back button configuration: hierarchical back navigation + double-back confirm exit
+    BackHandler(enabled = true) {
+        when {
+            isMediaOutputOpen -> isMediaOutputOpen = false
+            isQueueOpen -> isQueueOpen = false
+            isSettingsOpen -> isSettingsOpen = false
+            isProfileOpen -> isProfileOpen = false
+            isPlayerExpanded -> PlaybackManager.collapsePlayer()
+            selectedTab != NavigationTab.HOME -> selectedTab = NavigationTab.HOME
+            else -> {
+                val now = System.currentTimeMillis()
+                if (now - lastBackPressTime < 2000L) {
+                    (context as? android.app.Activity)?.finish()
+                } else {
+                    lastBackPressTime = now
+                    android.widget.Toast.makeText(context, "Press back again to exit", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
 
     val currentTrack by PlaybackManager.currentTrack.collectAsState()
     val isPlaying by PlaybackManager.isPlaying.collectAsState()
@@ -173,7 +199,7 @@ fun MainAppShell() {
                         isPlaying = isPlaying,
                         progressMs = positionMs,
                         durationMs = durationMs,
-                        onExpand = { isPlayerExpanded = true },
+                        onExpand = { PlaybackManager.expandPlayer() },
                         onOpenMediaOutput = { isMediaOutputOpen = true }
                     )
                 }
@@ -319,11 +345,11 @@ fun MainAppShell() {
                     isPlaying = isPlaying,
                     progressMs = positionMs,
                     durationMs = durationMs,
-                    onCollapse = { isPlayerExpanded = false },
+                    onCollapse = { PlaybackManager.collapsePlayer() },
                     onOpenQueue = { isQueueOpen = true },
                     onOpenMediaOutput = { isMediaOutputOpen = true },
                     onGoToArtist = {
-                        isPlayerExpanded = false
+                        PlaybackManager.collapsePlayer()
                         selectedTab = NavigationTab.SEARCH
                     }
                 )

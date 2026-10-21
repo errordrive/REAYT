@@ -301,8 +301,8 @@ fun SettingsScreen(
                         Divider(color = Color(0xFF333333))
 
                         SettingsSwitchRow(
-                            title = "Both speakers for sound (Dual speaker)",
-                            subtitle = "Plays sound through both the loudspeaker and the top ear speaker simultaneously",
+                            title = "Virtual stereo (Dual speaker)",
+                            subtitle = "Earpiece (Left channel) + Loudspeaker (Right channel) on non-stereo devices",
                             checked = bothSpeakersEnabled,
                             onCheckedChange = { SettingsManager.setBothSpeakersEnabled(it) }
                         )

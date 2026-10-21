@@ -10,11 +10,16 @@ import android.os.Build
 import android.util.Log
 import java.nio.ByteBuffer
 
+/**
+ * Engine that enables physical stereo playback on non-stereo devices:
+ * - Top Earpiece speaker = Left channel
+ * - Bottom Loudspeaker = Right channel
+ */
 object DualSpeakerManager {
     private const val TAG = "DualSpeakerManager"
 
     @Volatile
-    var isEnabled: Boolean = false
+    var isVirtualStereoEnabled: Boolean = false
         set(value) {
             field = value
             if (!value) {
@@ -25,7 +30,6 @@ object DualSpeakerManager {
     private var audioManager: AudioManager? = null
     private var earpieceTrack: AudioTrack? = null
     private var currentSampleRate = 44100
-    private var currentChannelCount = 2
     private var currentVolume = 1.0f
 
     fun init(context: Context) {
@@ -33,22 +37,21 @@ object DualSpeakerManager {
     }
 
     @Synchronized
-    fun onAudioFormatChanged(sampleRate: Int, channelCount: Int) {
-        if (sampleRate > 0 && channelCount > 0 && (currentSampleRate != sampleRate || currentChannelCount != channelCount)) {
+    fun onAudioFormatChanged(sampleRate: Int) {
+        if (sampleRate > 0 && currentSampleRate != sampleRate) {
             currentSampleRate = sampleRate
-            currentChannelCount = channelCount
-            if (isEnabled) {
+            if (isVirtualStereoEnabled) {
                 recreateTrack()
             }
         }
     }
 
     @Synchronized
-    fun writeAudio(buffer: ByteBuffer) {
-        if (!isEnabled) return
+    fun writeLeftChannelAudio(leftBuffer: ByteBuffer) {
+        if (!isVirtualStereoEnabled) return
         val am = audioManager ?: return
 
-        // If headphones or Bluetooth are connected, do not route to the phone earpiece
+        // If headphones or Bluetooth are connected, don't output to earpiece
         if (am.isWiredHeadsetOn || am.isBluetoothA2dpOn || am.isBluetoothScoOn) {
             return
         }
@@ -62,12 +65,12 @@ object DualSpeakerManager {
             if (track.playState != AudioTrack.PLAYSTATE_PLAYING) {
                 track.play()
             }
-            val remaining = buffer.remaining()
+            val remaining = leftBuffer.remaining()
             if (remaining > 0) {
-                track.write(buffer, remaining, AudioTrack.WRITE_NON_BLOCKING)
+                track.write(leftBuffer, remaining, AudioTrack.WRITE_NON_BLOCKING)
             }
         } catch (e: Throwable) {
-            Log.w(TAG, "DualSpeaker write error: ${e.message}")
+            Log.w(TAG, "writeLeftChannelAudio error: ${e.message}")
         }
     }
 
@@ -105,8 +108,7 @@ object DualSpeakerManager {
             .firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE } ?: return
 
         try {
-            val channelMask = if (currentChannelCount == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO
-            val minBuf = AudioTrack.getMinBufferSize(currentSampleRate, channelMask, AudioFormat.ENCODING_PCM_16BIT)
+            val minBuf = AudioTrack.getMinBufferSize(currentSampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
             val bufferSize = (minBuf * 2).coerceAtLeast(4096)
 
             val attrs = AudioAttributes.Builder()
@@ -117,7 +119,7 @@ object DualSpeakerManager {
             val format = AudioFormat.Builder()
                 .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                 .setSampleRate(currentSampleRate)
-                .setChannelMask(channelMask)
+                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                 .build()
 
             val track = AudioTrack.Builder()

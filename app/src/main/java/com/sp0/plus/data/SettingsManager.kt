@@ -179,7 +179,7 @@ object SettingsManager {
     fun setBothSpeakersEnabled(enabled: Boolean) {
         _bothSpeakersEnabled.value = enabled
         prefs.edit().putBoolean("both_speakers_enabled", enabled).apply()
-        com.sp0.plus.player.DualSpeakerManager.isEnabled = enabled
+        com.sp0.plus.player.DualSpeakerManager.isVirtualStereoEnabled = enabled
     }
 
     fun setGaplessPlayback(enabled: Boolean) {
