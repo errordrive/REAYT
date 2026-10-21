@@ -138,8 +138,18 @@ object AudioStreamResolver {
             val json = JSONObject(body)
             val results = json.optJSONArray("results") ?: return null
 
+            val queryWords = query.lowercase().split(" ", "_", "-", "(", ")", "\"", "'")
+                .map { it.trim() }
+                .filter { it.length > 2 && it != "official" && it != "audio" && it != "video" && it != "song" }
+
             for (i in 0 until results.length()) {
                 val item = results.optJSONObject(i) ?: continue
+                val songTitle = item.optString("song").lowercase()
+
+                // Validate that the Saavn result is actually relevant to the searched song
+                val isRelevant = queryWords.isEmpty() || queryWords.any { songTitle.contains(it) }
+                if (!isRelevant) continue
+
                 val encrypted = item.optString("encrypted_media_url")
                 if (encrypted.isNotBlank()) {
                     val decrypted = decryptMediaUrl(encrypted, prefer320)
@@ -174,12 +184,26 @@ object AudioStreamResolver {
             val dataArr = songsObj.optJSONArray("data") ?: return null
             if (dataArr.length() == 0) return null
 
-            val firstSong = dataArr.optJSONObject(0) ?: return null
-            val songId = firstSong.optString("id")
-            if (songId.isBlank()) return null
+            val queryWords = query.lowercase().split(" ", "_", "-", "(", ")", "\"", "'")
+                .map { it.trim() }
+                .filter { it.length > 2 && it != "official" && it != "audio" && it != "video" && it != "song" && it != "bangladesh" }
 
-            // Fetch details for this song id
-            fetchSongDetails(songId, prefer320)
+            for (i in 0 until dataArr.length()) {
+                val candidateSong = dataArr.optJSONObject(i) ?: continue
+                val songTitle = candidateSong.optString("title").lowercase()
+
+                val isRelevant = queryWords.isEmpty() || queryWords.any { songTitle.contains(it) }
+                if (!isRelevant) continue
+
+                val songId = candidateSong.optString("id")
+                if (songId.isNotBlank()) {
+                    val stream = fetchSongDetails(songId, prefer320)
+                    if (!stream.isNullOrBlank()) {
+                        return stream
+                    }
+                }
+            }
+            null
         } catch (e: Exception) {
             Log.w(TAG, "autocompleteSaavn failed: ${e.message}")
             null

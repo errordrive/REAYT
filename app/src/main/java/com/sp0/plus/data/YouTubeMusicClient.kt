@@ -111,27 +111,53 @@ object YouTubeMusicClient {
     /** Resolves a direct audio URL for [videoId], or null if every client fails. */
     suspend fun resolveStreamUrl(videoId: String): String? = withContext(Dispatchers.IO) {
         if (videoId.isBlank()) return@withContext null
-        val visitor = try { ensureVisitorData() } catch (_: Throwable) { "" }
+        var visitor = try { ensureVisitorData() } catch (_: Throwable) { "" }
+        if (visitor.isBlank()) {
+            visitor = fetchVisitorData().orEmpty()
+            if (visitor.isNotBlank()) SettingsManager.setVisitorData(visitor)
+        }
+        var refreshedVisitor = false
+
         for (client in playerClients) {
             try {
-                val ctx = JSONObject().put(
+                fun buildContext(v: String): JSONObject = JSONObject().put(
                     "client",
                     JSONObject().apply {
                         put("clientName", client.name)
                         put("clientVersion", client.version)
                         put("hl", "en")
                         put("gl", "US")
-                        if (visitor.isNotBlank()) put("visitorData", visitor)
+                        if (v.isNotBlank()) put("visitorData", v)
                         client.extra.invoke(this)
                     }
                 )
-                val body = JSONObject()
-                    .put("context", ctx)
+
+                var body = JSONObject()
+                    .put("context", buildContext(visitor))
                     .put("videoId", videoId)
                     .put("contentCheckOk", true)
                     .put("racyCheckOk", true)
-                val json = post("player", body, visitor, client.userAgent)
-                if (json.optJSONObject("playabilityStatus")?.optString("status") != "OK") continue
+
+                var json = post("player", body, visitor, client.userAgent)
+                var status = json.optJSONObject("playabilityStatus")?.optString("status")
+
+                if (status == "LOGIN_REQUIRED" && !refreshedVisitor) {
+                    refreshedVisitor = true
+                    val fresh = fetchVisitorData().orEmpty()
+                    if (fresh.isNotBlank()) {
+                        visitor = fresh
+                        SettingsManager.setVisitorData(fresh)
+                        body = JSONObject()
+                            .put("context", buildContext(visitor))
+                            .put("videoId", videoId)
+                            .put("contentCheckOk", true)
+                            .put("racyCheckOk", true)
+                        json = post("player", body, visitor, client.userAgent)
+                        status = json.optJSONObject("playabilityStatus")?.optString("status")
+                    }
+                }
+
+                if (status != "OK") continue
                 val url = pickAudioUrl(json)
                 if (url != null) return@withContext url
             } catch (_: Throwable) {
