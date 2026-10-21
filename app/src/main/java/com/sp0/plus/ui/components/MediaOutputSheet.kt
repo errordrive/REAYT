@@ -47,7 +47,7 @@ fun MediaOutputSheet(
     val availableDevices by DeviceOutputManager.availableDevices.collectAsState()
     val currentDevice by DeviceOutputManager.currentDevice.collectAsState()
     val currentVolume by DeviceOutputManager.currentVolume.collectAsState()
-    val forceMonoAudio by com.sp0.plus.data.SettingsManager.forceMonoAudio.collectAsState()
+    val bothSpeakersEnabled by com.sp0.plus.data.SettingsManager.bothSpeakersEnabled.collectAsState()
 
     Surface(
         modifier = modifier
@@ -276,20 +276,20 @@ fun MediaOutputSheet(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Force Mono Sound",
+                                    text = "Both Speakers for Sound",
                                     color = Color.White,
                                     fontSize = 15.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
-                                    text = "Downmixes stereo so single-speaker phones hear all instruments and vocals equally",
+                                    text = "Plays through both the main speaker and the ear speaker simultaneously",
                                     color = Color(0xFF888888),
                                     fontSize = 12.sp
                                 )
                             }
                             Switch(
-                                checked = forceMonoAudio,
-                                onCheckedChange = { com.sp0.plus.data.SettingsManager.setForceMonoAudio(it) },
+                                checked = bothSpeakersEnabled,
+                                onCheckedChange = { com.sp0.plus.data.SettingsManager.setBothSpeakersEnabled(it) },
                                 colors = SwitchDefaults.colors(
                                     checkedThumbColor = Color.White,
                                     checkedTrackColor = Color(0xFF1DB954),

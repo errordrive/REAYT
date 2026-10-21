@@ -23,7 +23,8 @@ import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.sp0.plus.data.NetworkModule
 import com.sp0.plus.data.SettingsManager
-import com.sp0.plus.player.MonoAudioProcessor
+import com.sp0.plus.player.DualSpeakerAudioProcessor
+import com.sp0.plus.player.DualSpeakerManager
 import androidx.media3.session.CommandButton
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
@@ -53,11 +54,7 @@ class PlaybackService : MediaSessionService() {
     var bassBoost: BassBoost? = null
         private set
 
-    val monoAudioProcessor = MonoAudioProcessor()
-
-    fun setMonoAudio(enabled: Boolean) {
-        monoAudioProcessor.isMonoEnabled = enabled
-    }
+    val dualSpeakerAudioProcessor = DualSpeakerAudioProcessor()
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
@@ -119,7 +116,8 @@ class PlaybackService : MediaSessionService() {
             OkHttpDataSource.Factory(NetworkModule.playerClient)
         )
 
-        monoAudioProcessor.isMonoEnabled = SettingsManager.forceMonoAudio.value
+        DualSpeakerManager.init(this)
+        DualSpeakerManager.isEnabled = SettingsManager.bothSpeakersEnabled.value
 
         val renderersFactory = object : DefaultRenderersFactory(this) {
             override fun buildAudioSink(
@@ -128,7 +126,7 @@ class PlaybackService : MediaSessionService() {
                 enableAudioTrackPlaybackParams: Boolean
             ): AudioSink? {
                 return DefaultAudioSink.Builder(context)
-                    .setAudioProcessors(arrayOf(monoAudioProcessor))
+                    .setAudioProcessors(arrayOf(dualSpeakerAudioProcessor))
                     .build()
             }
         }

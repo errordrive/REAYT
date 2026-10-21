@@ -51,7 +51,7 @@ fun SettingsScreen(
     val crossfadeEnabled by SettingsManager.crossfadeEnabled.collectAsState()
     val crossfadeDurationMs by SettingsManager.crossfadeDurationMs.collectAsState()
     val fadeEffectsEnabled by SettingsManager.fadeEffectsEnabled.collectAsState()
-    val forceMonoAudio by SettingsManager.forceMonoAudio.collectAsState()
+    val bothSpeakersEnabled by SettingsManager.bothSpeakersEnabled.collectAsState()
     val gaplessPlayback by SettingsManager.gaplessPlayback.collectAsState()
     val normalizeVolume by SettingsManager.normalizeVolume.collectAsState()
     val automix by SettingsManager.automix.collectAsState()
@@ -301,10 +301,10 @@ fun SettingsScreen(
                         Divider(color = Color(0xFF333333))
 
                         SettingsSwitchRow(
-                            title = "Force Mono Audio",
-                            subtitle = "Downmix stereo to mono. Recommended for single-speaker phones to prevent missing audio channels",
-                            checked = forceMonoAudio,
-                            onCheckedChange = { SettingsManager.setForceMonoAudio(it) }
+                            title = "Both speakers for sound (Dual speaker)",
+                            subtitle = "Plays sound through both the loudspeaker and the top ear speaker simultaneously",
+                            checked = bothSpeakersEnabled,
+                            onCheckedChange = { SettingsManager.setBothSpeakersEnabled(it) }
                         )
 
                         Divider(color = Color(0xFF333333))

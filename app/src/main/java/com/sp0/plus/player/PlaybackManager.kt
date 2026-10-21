@@ -59,6 +59,7 @@ object PlaybackManager {
     private var pendingFadeIn = false
     private var isCrossfading = false
     private var isSeeking = false
+    private var isEndingTransition = false
 
     private val _streamError = MutableStateFlow<String?>(null)
     val streamError: StateFlow<String?> = _streamError.asStateFlow()
@@ -176,6 +177,7 @@ object PlaybackManager {
                 try { mc.volume = clamped } catch (_: Throwable) {}
             }
         }
+        DualSpeakerManager.setVolume(clamped)
     }
 
     private fun fadeIn(durationMs: Long) {
@@ -188,10 +190,11 @@ object PlaybackManager {
         crossfadeJob?.cancel()
         crossfadeJob = scope.launch {
             try {
-                val steps = (durationMs / 30L).coerceIn(10L, 60L)
+                val steps = (durationMs / 25L).coerceIn(15L, 60L)
                 val stepTime = durationMs / steps
                 for (i in 0..steps) {
-                    val v = (i.toFloat() / steps.toFloat())
+                    val fraction = i.toFloat() / steps.toFloat()
+                    val v = fraction * fraction
                     applyPlayerVolume(v)
                     delay(stepTime)
                 }
@@ -212,10 +215,11 @@ object PlaybackManager {
         crossfadeJob?.cancel()
         crossfadeJob = scope.launch {
             try {
-                val steps = (durationMs / 30L).coerceIn(10L, 60L)
+                val steps = (durationMs / 25L).coerceIn(15L, 60L)
                 val stepTime = durationMs / steps
                 for (i in steps downTo 0) {
-                    val v = (i.toFloat() / steps.toFloat())
+                    val fraction = i.toFloat() / steps.toFloat()
+                    val v = fraction * fraction
                     applyPlayerVolume(v)
                     delay(stepTime)
                 }
@@ -238,10 +242,10 @@ object PlaybackManager {
 
             if (pendingFadeIn) {
                 pendingFadeIn = false
-                val fadeMs = if (crossfadeEnabled && crossfadeMs > 0) crossfadeMs.coerceIn(800L, 3000L) else 1000L
+                val fadeMs = if (crossfadeEnabled && crossfadeMs > 0) crossfadeMs.coerceIn(800L, 3000L) else 800L
                 fadeIn(fadeMs)
             } else if (fadeEnabled && !isCrossfading) {
-                fadeIn(800L)
+                fadeIn(700L)
             } else if (!isCrossfading) {
                 applyPlayerVolume(1f)
             }
@@ -357,9 +361,16 @@ object PlaybackManager {
                         val crossfadeMs = SettingsManager.crossfadeDurationMs.value.toLong()
                         if (crossfadeEnabled && crossfadeMs > 0 && dur > crossfadeMs * 2) {
                             val timeLeft = dur - pos
-                            if (timeLeft in 1..crossfadeMs) {
+                            if (timeLeft in 401..crossfadeMs) {
                                 val fraction = (timeLeft.toFloat() / crossfadeMs.toFloat()).coerceIn(0f, 1f)
-                                applyPlayerVolume(fraction)
+                                val v = fraction * fraction
+                                applyPlayerVolume(v)
+                            } else if (timeLeft in 1..400) {
+                                if (!isEndingTransition && (_repeatMode.value != RepeatMode.OFF || _currentIndex.value < _queue.value.lastIndex)) {
+                                    isEndingTransition = true
+                                    pendingFadeIn = true
+                                    skipNext()
+                                }
                             } else if (timeLeft > crossfadeMs && !isCrossfading && !pendingFadeIn) {
                                 applyPlayerVolume(1f)
                             }
@@ -389,6 +400,8 @@ object PlaybackManager {
             streamJob?.cancel()
             crossfadeJob?.cancel()
             isCrossfading = false
+            isEndingTransition = false
+            DualSpeakerManager.stop()
 
             val shouldFadeIn = pendingFadeIn || SettingsManager.fadeEffectsEnabled.value || (SettingsManager.crossfadeEnabled.value && SettingsManager.crossfadeDurationMs.value > 0)
             pendingFadeIn = shouldFadeIn
@@ -603,13 +616,15 @@ object PlaybackManager {
             val fadeEnabled = SettingsManager.fadeEffectsEnabled.value
             if (activePlayer.isPlaying) {
                 if (fadeEnabled) {
-                    fadeOut(500L) {
+                    fadeOut(400L) {
                         activePlayer.pause()
+                        DualSpeakerManager.pause()
                         _isPlaying.value = false
                         applyPlayerVolume(1f)
                     }
                 } else {
                     activePlayer.pause()
+                    DualSpeakerManager.pause()
                     _isPlaying.value = false
                 }
             } else {
@@ -621,7 +636,7 @@ object PlaybackManager {
                         applyPlayerVolume(0f)
                         activePlayer.play()
                         _isPlaying.value = true
-                        fadeIn(700L)
+                        fadeIn(600L)
                     } else {
                         applyPlayerVolume(1f)
                         activePlayer.play()
@@ -665,7 +680,7 @@ object PlaybackManager {
         val nextTrack = q[nextIdx]
         val fadeEnabled = SettingsManager.fadeEffectsEnabled.value
         if (_isPlaying.value && fadeEnabled) {
-            fadeOut(400L) {
+            fadeOut(350L) {
                 pendingFadeIn = true
                 playTrack(nextTrack)
             }
@@ -691,7 +706,7 @@ object PlaybackManager {
         val prevTrack = q[prevIdx]
         val fadeEnabled = SettingsManager.fadeEffectsEnabled.value
         if (_isPlaying.value && fadeEnabled) {
-            fadeOut(400L) {
+            fadeOut(350L) {
                 pendingFadeIn = true
                 playTrack(prevTrack)
             }
@@ -746,26 +761,27 @@ object PlaybackManager {
     }
 
     private fun handleTrackEnded() {
+        isEndingTransition = false
         when (_repeatMode.value) {
             RepeatMode.ONE -> {
                 seekTo(0L)
                 val activePlayer = PlaybackService.instance?.player ?: mediaController
-                if (SettingsManager.crossfadeEnabled.value && SettingsManager.crossfadeDurationMs.value > 0) {
+                if (SettingsManager.fadeEffectsEnabled.value || (SettingsManager.crossfadeEnabled.value && SettingsManager.crossfadeDurationMs.value > 0)) {
                     applyPlayerVolume(0f)
                     activePlayer?.play()
-                    fadeIn(SettingsManager.crossfadeDurationMs.value.toLong().coerceIn(500L, 3000L))
+                    fadeIn(SettingsManager.crossfadeDurationMs.value.toLong().coerceIn(600L, 3000L))
                 } else {
                     applyPlayerVolume(1f)
                     activePlayer?.play()
                 }
             }
             RepeatMode.ALL -> {
-                pendingFadeIn = SettingsManager.crossfadeEnabled.value && SettingsManager.crossfadeDurationMs.value > 0
+                pendingFadeIn = SettingsManager.fadeEffectsEnabled.value || (SettingsManager.crossfadeEnabled.value && SettingsManager.crossfadeDurationMs.value > 0)
                 skipNext()
             }
             RepeatMode.OFF -> {
                 if (_currentIndex.value < _queue.value.lastIndex) {
-                    pendingFadeIn = SettingsManager.crossfadeEnabled.value && SettingsManager.crossfadeDurationMs.value > 0
+                    pendingFadeIn = SettingsManager.fadeEffectsEnabled.value || (SettingsManager.crossfadeEnabled.value && SettingsManager.crossfadeDurationMs.value > 0)
                     skipNext()
                 } else {
                     _isPlaying.value = false
