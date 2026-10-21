@@ -307,17 +307,6 @@ fun MainAppShell() {
             )
         }
 
-        // Media Output Devices Sheet Overlay
-        AnimatedVisibility(
-            visible = isMediaOutputOpen,
-            enter = slideInVertically(initialOffsetY = { it }),
-            exit = slideOutVertically(targetOffsetY = { it })
-        ) {
-            MediaOutputSheet(
-                onClose = { isMediaOutputOpen = false }
-            )
-        }
-
         // Full Screen Player Sheet Overlay
         AnimatedVisibility(
             visible = isPlayerExpanded && currentTrack != null,
@@ -351,6 +340,17 @@ fun MainAppShell() {
                 queue = queue,
                 currentTrack = currentTrack,
                 onClose = { isQueueOpen = false }
+            )
+        }
+
+        // Media Output Devices Sheet Overlay (Rendered in front of FullPlayerSheet and QueueSheet)
+        AnimatedVisibility(
+            visible = isMediaOutputOpen,
+            enter = slideInVertically(initialOffsetY = { it }),
+            exit = slideOutVertically(targetOffsetY = { it })
+        ) {
+            MediaOutputSheet(
+                onClose = { isMediaOutputOpen = false }
             )
         }
     }

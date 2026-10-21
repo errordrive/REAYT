@@ -59,9 +59,19 @@ object DeviceOutputManager {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val outputs = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-            // Deduplicate outputs by productName: group AudioDeviceInfo entries by productName, keep only the first per group
-            val uniqueOutputs = outputs.groupBy { it.productName?.toString()?.trim() ?: it.id.toString() }
+            // Filter out telephony/earpiece/internal tuners so media audio is never routed to call receiver
+            val validOutputs = outputs.filter {
+                it.type != AudioDeviceInfo.TYPE_BUILTIN_EARPIECE &&
+                it.type != AudioDeviceInfo.TYPE_TELEPHONY &&
+                it.type != AudioDeviceInfo.TYPE_FM_TUNER &&
+                it.type != AudioDeviceInfo.TYPE_TV_TUNER
+            }
+
+            // Deduplicate outputs by combining device type and product name
+            val uniqueOutputs = validOutputs.groupBy { "${it.type}_${it.productName?.toString()?.trim().orEmpty()}" }
                 .values.mapNotNull { it.firstOrNull() }
+
+            var hasSpeaker = false
 
             for (dev in uniqueOutputs) {
                 val (type, isCurrent) = when (dev.type) {
@@ -71,7 +81,10 @@ object DeviceOutputManager {
                     AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> AudioDeviceType.WIRED_HEADSET to true
                     AudioDeviceInfo.TYPE_USB_DEVICE,
                     AudioDeviceInfo.TYPE_USB_HEADSET -> AudioDeviceType.USB to true
-                    AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> AudioDeviceType.SPEAKER to !foundCurrent
+                    AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> {
+                        hasSpeaker = true
+                        AudioDeviceType.SPEAKER to !foundCurrent
+                    }
                     else -> AudioDeviceType.OTHER to false
                 }
 
@@ -95,6 +108,21 @@ object DeviceOutputManager {
                         isCurrent = isCurrent,
                         systemId = dev.id,
                         deviceType = dev.type
+                    )
+                )
+            }
+
+            if (!hasSpeaker) {
+                val speakerDev = outputs.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+                devices.add(
+                    0,
+                    OutputDevice(
+                        id = speakerDev?.id?.toString() ?: "speaker_0",
+                        name = "This Phone (Speaker)",
+                        type = AudioDeviceType.SPEAKER,
+                        isCurrent = !foundCurrent,
+                        systemId = speakerDev?.id ?: 0,
+                        deviceType = AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
                     )
                 )
             }
@@ -124,14 +152,29 @@ object DeviceOutputManager {
         _availableDevices.value = updated
         _currentDevice.value = device.copy(isCurrent = true)
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val ctx = appContext
-            val am = (ctx?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager) ?: audioManager
-            if (am != null) {
+        val ctx = appContext
+        val am = (ctx?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager) ?: audioManager
+        try {
+            am?.mode = AudioManager.MODE_NORMAL
+        } catch (_: Throwable) {}
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val player = PlaybackService.instance?.player
+            if (device.type == AudioDeviceType.SPEAKER || device.deviceType == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) {
+                // Route strictly to phone loud speaker, never to call earpiece
+                val allOutputs = am?.getDevices(AudioManager.GET_DEVICES_OUTPUTS) ?: emptyArray()
+                val speakerTarget = allOutputs.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+                if (speakerTarget != null) {
+                    player?.setPreferredAudioDevice(speakerTarget)
+                } else {
+                    player?.setPreferredAudioDevice(null)
+                }
+            } else if (am != null) {
                 val allDevices = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
                 val target = allDevices.firstOrNull { it.id == device.systemId }
-                if (target != null) {
-                    PlaybackService.instance?.player?.setPreferredAudioDevice(target)
+                    ?: allDevices.firstOrNull { it.type == device.deviceType }
+                if (target != null && target.type != AudioDeviceInfo.TYPE_BUILTIN_EARPIECE) {
+                    player?.setPreferredAudioDevice(target)
                 }
             }
         }

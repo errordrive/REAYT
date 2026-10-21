@@ -77,14 +77,17 @@ object NetworkModule {
     }
 
     /**
-     * Client for ExoPlayer audio streaming. googlevideo URLs carry a `c=` param
-     * naming the client; User-Agent must match that client or the server answers 403.
+     * Client for ExoPlayer audio streaming. Uses system DNS for maximum reliability and throughput.
+     * googlevideo URLs carry a `c=` param naming the client; User-Agent must match that client or the server answers 403.
      */
     val playerClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
-            .dns(adblockDns)
+            .dns(Dns.SYSTEM)
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .followRedirects(true)
+            .followSslRedirects(true)
             .addInterceptor { chain ->
                 val req = chain.request()
                 val isGoogleVideo = req.url.host.contains("googlevideo.com")

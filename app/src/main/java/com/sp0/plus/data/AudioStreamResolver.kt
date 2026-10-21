@@ -94,7 +94,34 @@ object AudioStreamResolver {
         null
     }
 
-    private fun searchSaavn(query: String): String? {
+    /**
+     * Resolves an audio stream specifically using JioSaavn, with configurable quality preference.
+     */
+    suspend fun resolveSaavnStream(
+        title: String,
+        singer: String,
+        prefer320: Boolean = true
+    ): ResolvedAudioStream? = withContext(Dispatchers.IO) {
+        val cleanTitle = cleanTrackTitle(title)
+        val cleanArtist = cleanArtistName(singer)
+        val query = "$cleanTitle $cleanArtist".trim()
+
+        var saavnUrl = searchSaavn(query, prefer320)
+        if (saavnUrl.isNullOrBlank() && cleanTitle.isNotBlank()) {
+            saavnUrl = searchSaavn(cleanTitle, prefer320)
+        }
+        if (saavnUrl.isNullOrBlank()) {
+            saavnUrl = autocompleteSaavn(query, prefer320)
+        }
+        if (!saavnUrl.isNullOrBlank()) {
+            val badge = if (prefer320 && saavnUrl.contains("_320.mp4")) "LOSSLESS • 320 KBPS" else "HIGH • 160 KBPS"
+            ResolvedAudioStream(url = saavnUrl, audioBadge = badge)
+        } else {
+            null
+        }
+    }
+
+    private fun searchSaavn(query: String, prefer320: Boolean = true): String? {
         if (query.isBlank()) return null
         return try {
             val encodedQuery = URLEncoder.encode(query, "UTF-8")
@@ -115,7 +142,7 @@ object AudioStreamResolver {
                 val item = results.optJSONObject(i) ?: continue
                 val encrypted = item.optString("encrypted_media_url")
                 if (encrypted.isNotBlank()) {
-                    val decrypted = decryptMediaUrl(encrypted)
+                    val decrypted = decryptMediaUrl(encrypted, prefer320)
                     if (!decrypted.isNullOrBlank()) {
                         return decrypted
                     }
@@ -128,7 +155,7 @@ object AudioStreamResolver {
         }
     }
 
-    private fun autocompleteSaavn(query: String): String? {
+    private fun autocompleteSaavn(query: String, prefer320: Boolean = true): String? {
         if (query.isBlank()) return null
         return try {
             val encodedQuery = URLEncoder.encode(query, "UTF-8")
@@ -152,14 +179,14 @@ object AudioStreamResolver {
             if (songId.isBlank()) return null
 
             // Fetch details for this song id
-            fetchSongDetails(songId)
+            fetchSongDetails(songId, prefer320)
         } catch (e: Exception) {
             Log.w(TAG, "autocompleteSaavn failed: ${e.message}")
             null
         }
     }
 
-    private fun fetchSongDetails(songId: String): String? {
+    private fun fetchSongDetails(songId: String, prefer320: Boolean = true): String? {
         return try {
             val url = "https://www.jiosaavn.com/api.php?__call=song.getDetails&cc=in&_marker=0%3F_marker%3D0&_format=json&pids=$songId"
             val req = Request.Builder()
@@ -175,7 +202,7 @@ object AudioStreamResolver {
             val songObj = json.optJSONObject(songId) ?: return null
             val encrypted = songObj.optString("encrypted_media_url")
             if (encrypted.isNotBlank()) {
-                decryptMediaUrl(encrypted)
+                decryptMediaUrl(encrypted, prefer320)
             } else {
                 null
             }
@@ -186,9 +213,9 @@ object AudioStreamResolver {
     }
 
     /**
-     * Decrypts the DES-encrypted media URL and upgrades it to unthrottled 320 kbps.
+     * Decrypts the DES-encrypted media URL and optionally upgrades it to unthrottled 320 kbps.
      */
-    fun decryptMediaUrl(encryptedUrl: String): String? {
+    fun decryptMediaUrl(encryptedUrl: String, prefer320: Boolean = true): String? {
         return try {
             val keyBytes = DES_SECRET_KEY.toByteArray(StandardCharsets.UTF_8)
             val keySpec = SecretKeySpec(keyBytes, "DES")
@@ -200,10 +227,14 @@ object AudioStreamResolver {
             val rawUrl = String(decryptedBytes, StandardCharsets.UTF_8).trim()
 
             if (rawUrl.startsWith("http")) {
-                // Upgrade from default 96/160 kbps to studio master 320 kbps
-                rawUrl.replace("_96.mp4", "_320.mp4")
-                    .replace("_160.mp4", "_320.mp4")
-                    .replace("_48.mp4", "_320.mp4")
+                if (prefer320) {
+                    // Upgrade from default 96/160 kbps to studio master 320 kbps
+                    rawUrl.replace("_96.mp4", "_320.mp4")
+                        .replace("_160.mp4", "_320.mp4")
+                        .replace("_48.mp4", "_320.mp4")
+                } else {
+                    rawUrl
+                }
             } else {
                 null
             }

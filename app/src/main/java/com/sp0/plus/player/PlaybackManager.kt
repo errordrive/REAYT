@@ -2,6 +2,7 @@ package com.sp0.plus.player
 
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import com.sp0.plus.data.AudioStreamResolver
@@ -32,6 +33,14 @@ enum class RepeatMode {
     OFF, ONE, ALL
 }
 
+private enum class StreamSource {
+    LOCAL_CACHE,
+    YOUTUBE,
+    SAAVN_320,
+    SAAVN_160,
+    OTHER
+}
+
 object PlaybackManager {
 
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
@@ -46,6 +55,7 @@ object PlaybackManager {
     private val playbackToken = AtomicLong(0L)
     val currentPlaybackToken: Long get() = playbackToken.get()
 
+    private var currentStreamSource = StreamSource.OTHER
     private var pendingFadeIn = false
     private var isCrossfading = false
     private var isSeeking = false
@@ -196,6 +206,67 @@ object PlaybackManager {
     }
 
     fun handlePlayerError(error: androidx.media3.common.PlaybackException) {
+        val myToken = playbackToken.get()
+        val track = _currentTrack.value
+
+        val isSourceError = error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_UNSPECIFIED ||
+                error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
+                error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
+                error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ||
+                error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED ||
+                error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED ||
+                (error.message?.contains("Source error", ignoreCase = true) == true)
+
+        if (track != null && isSourceError) {
+            when (currentStreamSource) {
+                StreamSource.YOUTUBE -> {
+                    android.util.Log.w("PlaybackManager", "YouTube direct stream failed with source error for '${track.title}'. Retrying with JioSaavn master stream...")
+                    currentStreamSource = StreamSource.SAAVN_320
+                    retryJob?.cancel()
+                    retryJob = scope.launch {
+                        val saavn = AudioStreamResolver.resolveSaavnStream(track.title, track.singer, prefer320 = true)
+                        if (saavn != null && playbackToken.get() == myToken) {
+                            _audioQualityBadge.value = saavn.audioBadge
+                            executePlayback(track, saavn.url, myToken)
+                            return@launch
+                        }
+                        val saavn160 = AudioStreamResolver.resolveSaavnStream(track.title, track.singer, prefer320 = false)
+                        if (saavn160 != null && playbackToken.get() == myToken) {
+                            currentStreamSource = StreamSource.SAAVN_160
+                            _audioQualityBadge.value = saavn160.audioBadge
+                            executePlayback(track, saavn160.url, myToken)
+                            return@launch
+                        }
+                        _isPending.value = false
+                        _isBuffering.value = false
+                        _isPlaying.value = false
+                        _streamError.value = "Playback error: Source error (stream unavailable)"
+                    }
+                    return
+                }
+                StreamSource.SAAVN_320 -> {
+                    android.util.Log.w("PlaybackManager", "Saavn 320k stream failed for '${track.title}'. Retrying with 160k stream...")
+                    currentStreamSource = StreamSource.SAAVN_160
+                    retryJob?.cancel()
+                    retryJob = scope.launch {
+                        val saavn160 = AudioStreamResolver.resolveSaavnStream(track.title, track.singer, prefer320 = false)
+                        if (saavn160 != null && playbackToken.get() == myToken) {
+                            _audioQualityBadge.value = saavn160.audioBadge
+                            executePlayback(track, saavn160.url, myToken)
+                            return@launch
+                        }
+                        _isPending.value = false
+                        _isBuffering.value = false
+                        _isPlaying.value = false
+                        _streamError.value = "Playback error: Source error (stream unavailable)"
+                    }
+                    return
+                }
+                else -> {}
+            }
+        }
+
+        android.util.Log.e("PlaybackManager", "Player error: ${error.errorCodeName} - ${error.message}", error)
         _isPending.value = false
         _isBuffering.value = false
         _isPlaying.value = false
@@ -281,12 +352,14 @@ object PlaybackManager {
 
                     var streamUrl = track.url
                     var badge = _audioQualityBadge.value
+                    var streamSource = StreamSource.OTHER
 
                     if (DownloadManager.isDownloaded(track.youtubeVideoId)) {
                         val localPath = DownloadManager.getLocalPath(track.youtubeVideoId)
                         if (!localPath.isNullOrBlank()) {
-                            streamUrl = localPath
+                            streamUrl = if (localPath.startsWith("/")) "file://$localPath" else localPath
                             badge = "OFFLINE • CACHED"
+                            streamSource = StreamSource.LOCAL_CACHE
                         }
                     }
 
@@ -299,12 +372,18 @@ object PlaybackManager {
                         if (resolved != null) {
                             streamUrl = resolved.url
                             badge = resolved.audioBadge
+                            streamSource = when {
+                                streamUrl.contains("googlevideo.com") -> StreamSource.YOUTUBE
+                                streamUrl.contains("saavncdn.com") -> if (streamUrl.contains("_320.mp4")) StreamSource.SAAVN_320 else StreamSource.SAAVN_160
+                                else -> StreamSource.OTHER
+                            }
                         }
                     }
 
                     if (playbackToken.get() != myToken) return@launch
 
                     _audioQualityBadge.value = badge
+                    currentStreamSource = streamSource
 
                     if (streamUrl.isBlank()) {
                         _isPending.value = false
@@ -357,7 +436,19 @@ object PlaybackManager {
         try {
             if (playbackToken.get() != token) return
 
-            val uri = android.net.Uri.parse(streamUrl)
+            val uri = if (streamUrl.startsWith("/")) {
+                android.net.Uri.fromFile(java.io.File(streamUrl))
+            } else {
+                android.net.Uri.parse(streamUrl)
+            }
+
+            val mimeType = when {
+                streamUrl.contains(".mp3", ignoreCase = true) || streamUrl.contains("audio/mpeg") -> MimeTypes.AUDIO_MPEG
+                streamUrl.contains(".m4a", ignoreCase = true) || streamUrl.contains(".mp4", ignoreCase = true) || streamUrl.contains("audio/mp4") -> MimeTypes.AUDIO_MP4
+                streamUrl.contains("googlevideo.com") -> MimeTypes.AUDIO_MP4
+                else -> MimeTypes.AUDIO_MP4
+            }
+
             val mediaMetadata = MediaMetadata.Builder()
                 .setTitle(track.title)
                 .setArtist(track.singer)
@@ -368,6 +459,7 @@ object PlaybackManager {
             val mediaItem = MediaItem.Builder()
                 .setMediaId(track.id)
                 .setUri(uri)
+                .setMimeType(mimeType)
                 .setRequestMetadata(
                     MediaItem.RequestMetadata.Builder()
                         .setMediaUri(uri)
