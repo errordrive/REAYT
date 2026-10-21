@@ -149,9 +149,9 @@ fun HomeScreen(
             }
         }
 
-        // Section 1: "Jump back in" (or "Start exploring" hero card)
-        item {
-            if (recentlyPlayed.isNotEmpty()) {
+        // Section 1: "Jump back in" (only when history is available)
+        if (recentlyPlayed.isNotEmpty()) {
+            item {
                 Column {
                     SectionHeader(title = "Jump back in")
                     Spacer(modifier = Modifier.height(12.dp))
@@ -160,53 +160,6 @@ fun HomeScreen(
                             TrackAlbumCard(
                                 track = track,
                                 onClick = { PlaybackManager.playTrack(track, recentlyPlayed) }
-                            )
-                        }
-                    }
-                }
-            } else {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = Color(0xFF1F1F1F),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .background(
-                                Brush.horizontalGradient(
-                                    listOf(Color(0xFF1DB954).copy(alpha = 0.2f), Color(0xFF1F1F1F))
-                                )
-                            )
-                            .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = Color(0xFF1DB954),
-                            modifier = Modifier.size(44.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.PlayArrow,
-                                    contentDescription = null,
-                                    tint = Color.Black,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.width(14.dp))
-                        Column {
-                            Text(
-                                text = "Start exploring",
-                                color = Color.White,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = "Play music to build your personalized history & mix",
-                                color = Color(0xFFB3B3B3),
-                                fontSize = 12.sp
                             )
                         }
                     }

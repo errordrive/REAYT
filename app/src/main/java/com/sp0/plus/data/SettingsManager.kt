@@ -156,7 +156,11 @@ object SettingsManager {
 
     fun setCrossfadeDurationMs(ms: Int) {
         _crossfadeDurationMs.value = ms
-        prefs.edit().putInt("crossfade_duration_ms", ms).apply()
+        _crossfadeEnabled.value = (ms > 0)
+        prefs.edit()
+            .putInt("crossfade_duration_ms", ms)
+            .putBoolean("crossfade_dj_mode", ms > 0)
+            .apply()
     }
 
     fun setGaplessPlayback(enabled: Boolean) {

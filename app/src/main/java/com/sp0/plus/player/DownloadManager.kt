@@ -182,68 +182,134 @@ object DownloadManager {
 
         scope.launch {
             try {
+                // 1. Resolve initial stream (e.g. YouTube known videoId or Saavn)
                 val resolved = AudioStreamResolver.resolveStream(
                     title = track.title,
                     singer = track.singer,
                     fallbackVideoId = track.youtubeVideoId
                 )
-                val streamUrl = resolved?.url
-                if (streamUrl.isNullOrBlank()) {
-                    val err = "Could not resolve stream"
-                    setError(vid, err)
-                    updateDownloadNotification(context, track, 0f, isComplete = false, error = err)
-                    return@launch
+
+                val candidates = mutableListOf<String>()
+                if (!resolved?.url.isNullOrBlank()) {
+                    candidates.add(resolved!!.url)
                 }
 
                 val dir = context.getExternalFilesDir("music") ?: context.filesDir
                 dir.mkdirs()
 
-                val request = okhttp3.Request.Builder()
-                    .url(streamUrl)
-                    .header("User-Agent", NetworkModule.UA_WEB)
-                    .build()
+                var downloadSuccess = false
+                var lastErrorMessage = "Could not resolve stream"
 
-                val response = NetworkModule.playerClient.newCall(request).execute()
-                if (!response.isSuccessful) {
-                    val err = "HTTP ${response.code} error"
-                    setError(vid, err)
-                    updateDownloadNotification(context, track, 0f, isComplete = false, error = err)
-                    return@launch
+                // 2. Attempt primary stream candidate
+                for (streamUrl in candidates) {
+                    try {
+                        val reqBuilder = okhttp3.Request.Builder().url(streamUrl)
+                        if (!streamUrl.contains("googlevideo.com")) {
+                            reqBuilder.header("User-Agent", NetworkModule.UA_WEB)
+                        }
+                        val request = reqBuilder.build()
+                        val response = NetworkModule.playerClient.newCall(request).execute()
+                        if (!response.isSuccessful) {
+                            lastErrorMessage = "HTTP ${response.code} error"
+                            response.close()
+                            continue
+                        }
+
+                        val body = response.body ?: run {
+                            lastErrorMessage = "Empty body"
+                            response.close()
+                            continue
+                        }
+
+                        val contentType = response.header("Content-Type").orEmpty().lowercase()
+                        val extension = if (streamUrl.contains(".mp3", ignoreCase = true) || contentType.contains("audio/mpeg") || contentType.contains("audio/mp3")) {
+                            ".mp3"
+                        } else {
+                            ".m4a"
+                        }
+
+                        val file = File(dir, "$vid$extension")
+                        val total = body.contentLength().toFloat()
+                        var downloaded = 0L
+                        val buffer = ByteArray(8192)
+                        body.byteStream().use { input ->
+                            file.outputStream().buffered().use { output ->
+                                while (true) {
+                                    val read = input.read(buffer)
+                                    if (read == -1) break
+                                    output.write(buffer, 0, read)
+                                    downloaded += read
+                                    val progress = if (total > 0) (downloaded / total).coerceIn(0f, 1f) else 0f
+                                    setProgress(vid, progress)
+                                    updateDownloadNotification(context, track, progress, isComplete = false, error = null)
+                                }
+                            }
+                        }
+                        setComplete(vid, file.absolutePath, context)
+                        updateDownloadNotification(context, track, 1.0f, isComplete = true, error = null)
+                        downloadSuccess = true
+                        break
+                    } catch (e: Exception) {
+                        lastErrorMessage = e.message ?: "Connection failed"
+                    }
                 }
 
-                val body = response.body ?: run {
-                    val err = "Empty body"
-                    setError(vid, err)
-                    updateDownloadNotification(context, track, 0f, isComplete = false, error = err)
-                    return@launch
-                }
+                // 3. Fallback to JioSaavn studio master if YouTube gave 403 or failed
+                if (!downloadSuccess) {
+                    android.util.Log.w("DownloadManager", "Primary download failed ($lastErrorMessage). Attempting JioSaavn master stream fallback for '${track.title}'...")
+                    val saavnStreams = mutableListOf<String>()
+                    AudioStreamResolver.resolveSaavnStream(track.title, track.singer, prefer320 = true)?.url?.let { saavnStreams.add(it) }
+                    AudioStreamResolver.resolveSaavnStream(track.title, track.singer, prefer320 = false)?.url?.let { saavnStreams.add(it) }
 
-                val contentType = response.header("Content-Type").orEmpty().lowercase()
-                val extension = if (streamUrl.contains(".mp3", ignoreCase = true) || contentType.contains("audio/mpeg") || contentType.contains("audio/mp3")) {
-                    ".mp3"
-                } else {
-                    ".m4a"
-                }
+                    for (saavnUrl in saavnStreams) {
+                        try {
+                            val request = okhttp3.Request.Builder()
+                                .url(saavnUrl)
+                                .header("User-Agent", NetworkModule.UA_WEB)
+                                .build()
+                            val response = NetworkModule.playerClient.newCall(request).execute()
+                            if (!response.isSuccessful) {
+                                lastErrorMessage = "HTTP ${response.code} error"
+                                response.close()
+                                continue
+                            }
+                            val body = response.body ?: run {
+                                lastErrorMessage = "Empty body"
+                                response.close()
+                                continue
+                            }
 
-                val file = File(dir, "$vid$extension")
-                val total = body.contentLength().toFloat()
-                var downloaded = 0L
-                val buffer = ByteArray(8192)
-                body.byteStream().use { input ->
-                    file.outputStream().buffered().use { output ->
-                        while (true) {
-                            val read = input.read(buffer)
-                            if (read == -1) break
-                            output.write(buffer, 0, read)
-                            downloaded += read
-                            val progress = if (total > 0) (downloaded / total).coerceIn(0f, 1f) else 0f
-                            setProgress(vid, progress)
-                            updateDownloadNotification(context, track, progress, isComplete = false, error = null)
+                            val file = File(dir, "$vid.m4a")
+                            val total = body.contentLength().toFloat()
+                            var downloaded = 0L
+                            val buffer = ByteArray(8192)
+                            body.byteStream().use { input ->
+                                file.outputStream().buffered().use { output ->
+                                    while (true) {
+                                        val read = input.read(buffer)
+                                        if (read == -1) break
+                                        output.write(buffer, 0, read)
+                                        downloaded += read
+                                        val progress = if (total > 0) (downloaded / total).coerceIn(0f, 1f) else 0f
+                                        setProgress(vid, progress)
+                                        updateDownloadNotification(context, track, progress, isComplete = false, error = null)
+                                    }
+                                }
+                            }
+                            setComplete(vid, file.absolutePath, context)
+                            updateDownloadNotification(context, track, 1.0f, isComplete = true, error = null)
+                            downloadSuccess = true
+                            break
+                        } catch (e: Exception) {
+                            lastErrorMessage = e.message ?: "Fallback failed"
                         }
                     }
                 }
-                setComplete(vid, file.absolutePath, context)
-                updateDownloadNotification(context, track, 1.0f, isComplete = true, error = null)
+
+                if (!downloadSuccess) {
+                    setError(vid, lastErrorMessage)
+                    updateDownloadNotification(context, track, 0f, isComplete = false, error = lastErrorMessage)
+                }
             } catch (e: Exception) {
                 val err = e.message ?: "Download failed"
                 setError(vid, err)
