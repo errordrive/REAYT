@@ -215,7 +215,8 @@ object DownloadManager {
                             continue
                         }
 
-                        val body = response.body ?: run {
+                        val body = response.body
+                        if (body == null) {
                             lastErrorMessage = "Empty body"
                             response.close()
                             continue
@@ -273,7 +274,8 @@ object DownloadManager {
                                 response.close()
                                 continue
                             }
-                            val body = response.body ?: run {
+                            val body = response.body
+                            if (body == null) {
                                 lastErrorMessage = "Empty body"
                                 response.close()
                                 continue
