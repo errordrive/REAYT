@@ -30,6 +30,12 @@ object SettingsManager {
     private val _crossfadeDurationMs = MutableStateFlow(4000)
     val crossfadeDurationMs: StateFlow<Int> = _crossfadeDurationMs.asStateFlow()
 
+    private val _fadeEffectsEnabled = MutableStateFlow(true)
+    val fadeEffectsEnabled: StateFlow<Boolean> = _fadeEffectsEnabled.asStateFlow()
+
+    private val _forceMonoAudio = MutableStateFlow(false)
+    val forceMonoAudio: StateFlow<Boolean> = _forceMonoAudio.asStateFlow()
+
     private val _gaplessPlayback = MutableStateFlow(true)
     val gaplessPlayback: StateFlow<Boolean> = _gaplessPlayback.asStateFlow()
 
@@ -104,6 +110,8 @@ object SettingsManager {
 
         _crossfadeEnabled.value = prefs.getBoolean("crossfade_dj_mode", true)
         _crossfadeDurationMs.value = prefs.getInt("crossfade_duration_ms", 4000)
+        _fadeEffectsEnabled.value = prefs.getBoolean("fade_effects_enabled", true)
+        _forceMonoAudio.value = prefs.getBoolean("force_mono_audio", false)
         _gaplessPlayback.value = prefs.getBoolean("gapless_playback", true)
         _normalizeVolume.value = prefs.getBoolean("normalize_volume", true)
         _automix.value = prefs.getBoolean("automix", true)
@@ -161,6 +169,17 @@ object SettingsManager {
             .putInt("crossfade_duration_ms", ms)
             .putBoolean("crossfade_dj_mode", ms > 0)
             .apply()
+    }
+
+    fun setFadeEffectsEnabled(enabled: Boolean) {
+        _fadeEffectsEnabled.value = enabled
+        prefs.edit().putBoolean("fade_effects_enabled", enabled).apply()
+    }
+
+    fun setForceMonoAudio(enabled: Boolean) {
+        _forceMonoAudio.value = enabled
+        prefs.edit().putBoolean("force_mono_audio", enabled).apply()
+        com.sp0.plus.ui.notification.PlaybackService.instance?.setMonoAudio(enabled)
     }
 
     fun setGaplessPlayback(enabled: Boolean) {
@@ -269,6 +288,8 @@ object SettingsManager {
             put("cellularQuality", _cellularQuality.value.name)
             put("crossfadeEnabled", _crossfadeEnabled.value)
             put("crossfadeDurationMs", _crossfadeDurationMs.value)
+            put("fadeEffectsEnabled", _fadeEffectsEnabled.value)
+            put("forceMonoAudio", _forceMonoAudio.value)
             put("gaplessPlayback", _gaplessPlayback.value)
             put("normalizeVolume", _normalizeVolume.value)
             put("automix", _automix.value)
@@ -334,6 +355,8 @@ object SettingsManager {
                 }
                 if (settingsObj.has("crossfadeEnabled")) setCrossfadeEnabled(settingsObj.getBoolean("crossfadeEnabled"))
                 if (settingsObj.has("crossfadeDurationMs")) setCrossfadeDurationMs(settingsObj.getInt("crossfadeDurationMs"))
+                if (settingsObj.has("fadeEffectsEnabled")) setFadeEffectsEnabled(settingsObj.getBoolean("fadeEffectsEnabled"))
+                if (settingsObj.has("forceMonoAudio")) setForceMonoAudio(settingsObj.getBoolean("forceMonoAudio"))
                 if (settingsObj.has("gaplessPlayback")) setGaplessPlayback(settingsObj.getBoolean("gaplessPlayback"))
                 if (settingsObj.has("normalizeVolume")) setNormalizeVolume(settingsObj.getBoolean("normalizeVolume"))
                 if (settingsObj.has("automix")) setAutomix(settingsObj.getBoolean("automix"))

@@ -34,6 +34,7 @@ fun iconForDeviceType(type: Int): ImageVector = when (type) {
     AudioDeviceInfo.TYPE_WIRED_HEADSET  -> Icons.Default.Headphones
     AudioDeviceInfo.TYPE_USB_HEADSET,
     AudioDeviceInfo.TYPE_USB_DEVICE     -> Icons.Default.Usb
+    AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> Icons.Default.Hearing
     AudioDeviceInfo.TYPE_BUS            -> Icons.Default.DirectionsBus
     else                               -> Icons.Default.PhoneAndroid
 }
@@ -46,6 +47,7 @@ fun MediaOutputSheet(
     val availableDevices by DeviceOutputManager.availableDevices.collectAsState()
     val currentDevice by DeviceOutputManager.currentDevice.collectAsState()
     val currentVolume by DeviceOutputManager.currentVolume.collectAsState()
+    val forceMonoAudio by com.sp0.plus.data.SettingsManager.forceMonoAudio.collectAsState()
 
     Surface(
         modifier = modifier
@@ -248,6 +250,56 @@ fun MediaOutputSheet(
                             }
                         }
                     }
+                }
+
+                item {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "SOUND EFFECTS",
+                        color = Color(0xFF888888),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color(0xFF1F1F1F),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Force Mono Sound",
+                                    color = Color.White,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "Downmixes stereo so single-speaker phones hear all instruments and vocals equally",
+                                    color = Color(0xFF888888),
+                                    fontSize = 12.sp
+                                )
+                            }
+                            Switch(
+                                checked = forceMonoAudio,
+                                onCheckedChange = { com.sp0.plus.data.SettingsManager.setForceMonoAudio(it) },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White,
+                                    checkedTrackColor = Color(0xFF1DB954),
+                                    uncheckedThumbColor = Color(0xFFB3B3B3),
+                                    uncheckedTrackColor = Color(0xFF333333)
+                                )
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(32.dp))
                 }
             }
         }

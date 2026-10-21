@@ -16,10 +16,14 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.sp0.plus.data.NetworkModule
 import com.sp0.plus.data.SettingsManager
+import com.sp0.plus.player.MonoAudioProcessor
 import androidx.media3.session.CommandButton
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
@@ -48,6 +52,12 @@ class PlaybackService : MediaSessionService() {
         private set
     var bassBoost: BassBoost? = null
         private set
+
+    val monoAudioProcessor = MonoAudioProcessor()
+
+    fun setMonoAudio(enabled: Boolean) {
+        monoAudioProcessor.isMonoEnabled = enabled
+    }
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
@@ -109,7 +119,21 @@ class PlaybackService : MediaSessionService() {
             OkHttpDataSource.Factory(NetworkModule.playerClient)
         )
 
-        val exoPlayer = ExoPlayer.Builder(this)
+        monoAudioProcessor.isMonoEnabled = SettingsManager.forceMonoAudio.value
+
+        val renderersFactory = object : DefaultRenderersFactory(this) {
+            override fun buildAudioSink(
+                context: Context,
+                enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean
+            ): AudioSink? {
+                return DefaultAudioSink.Builder(context)
+                    .setAudioProcessors(arrayOf(monoAudioProcessor))
+                    .build()
+            }
+        }
+
+        val exoPlayer = ExoPlayer.Builder(this, renderersFactory)
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
             .setAudioAttributes(audioAttributes, true)
             .setHandleAudioBecomingNoisy(true)
@@ -291,6 +315,7 @@ class PlaybackService : MediaSessionService() {
                 .build()
             return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
                 .setAvailableSessionCommands(availableSessionCommands)
+                .setAvailablePlayerCommands(connectionResult.availablePlayerCommands)
                 .build()
         }
 
