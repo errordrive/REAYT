@@ -92,11 +92,36 @@ class PlaybackService : MediaSessionService() {
             }
             val numBands = eq.numberOfBands.toInt()
             for (i in 0 until minOf(5, numBands)) {
-                eq.setBandLevel(i.toShort(), gains[i])
+                try {
+                    eq.setBandLevel(i.toShort(), gains[i])
+                } catch (_: Throwable) {}
             }
-            bassBoost?.setStrength(if (bassOn) 800.toShort() else 0.toShort())
+            try {
+                bassBoost?.setStrength(if (bassOn) 800.toShort() else 0.toShort())
+            } catch (_: Throwable) {}
         } catch (e: Throwable) {
             android.util.Log.w("PlaybackService", "applyEqSettings error: ${e.message}")
+        }
+    }
+
+    private fun initAudioEffects(audioSessionId: Int) {
+        try {
+            equalizer?.release()
+            bassBoost?.release()
+        } catch (_: Throwable) {}
+        equalizer = null
+        bassBoost = null
+
+        try {
+            equalizer = Equalizer(0, audioSessionId).apply { enabled = true }
+            bassBoost = BassBoost(0, audioSessionId).apply { enabled = true }
+            applyEqSettings(
+                SettingsManager.equalizerPreset.value,
+                SettingsManager.bassBoostEnabled.value,
+                SettingsManager.equalizerBands.value
+            )
+        } catch (e: Throwable) {
+            android.util.Log.w("PlaybackService", "Failed to init Equalizer/BassBoost for session $audioSessionId: ${e.message}")
         }
     }
 
@@ -144,6 +169,12 @@ class PlaybackService : MediaSessionService() {
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 com.sp0.plus.player.PlaybackManager.updatePlaybackState(playbackState)
+            }
+
+            override fun onAudioSessionIdChanged(audioSessionId: Int) {
+                if (audioSessionId != C.AUDIO_SESSION_ID_UNSET && audioSessionId != 0) {
+                    initAudioEffects(audioSessionId)
+                }
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -195,16 +226,6 @@ class PlaybackService : MediaSessionService() {
         )
         mediaSession?.setCustomLayout(commandButtons)
 
-        try {
-            val audioSessionId = exoPlayer.audioSessionId
-            if (audioSessionId != C.AUDIO_SESSION_ID_UNSET) {
-                equalizer = Equalizer(0, audioSessionId).apply { enabled = true }
-                bassBoost = BassBoost(0, audioSessionId).apply { enabled = true }
-            }
-        } catch (e: Throwable) {
-            android.util.Log.w("PlaybackService", "Failed to init Equalizer/BassBoost: ${e.message}")
-        }
-
         serviceScope.launch {
             combine(
                 SettingsManager.equalizerPreset,
@@ -238,15 +259,12 @@ class PlaybackService : MediaSessionService() {
                     p.prepare()
                     p.play()
                 } else {
-                    val ex = androidx.media3.common.PlaybackException(
-                        "MediaItem URI is null",
-                        null,
-                        androidx.media3.common.PlaybackException.ERROR_CODE_FAILED_RUNTIME_CHECK
-                    )
-                    com.sp0.plus.player.PlaybackManager.handlePlayerError(ex)
+                    android.util.Log.w("PlaybackService", "MediaItem URI is null; cancelling play")
+                    com.sp0.plus.player.PlaybackManager.onStreamUnavailable("Unable to stream track (audio URI unavailable)")
                 }
             } catch (e: Throwable) {
                 android.util.Log.e("PlaybackService", "playMediaItem failed: ${e.message}", e)
+                com.sp0.plus.player.PlaybackManager.onStreamUnavailable("Playback error: ${e.message}")
             }
         }
     }

@@ -32,7 +32,7 @@ object YouTubeMusicClient {
     )
 
     // Clients that return direct (un-ciphered) stream URLs, tried in order.
-    // iOS client provides reliable, unthrottled, unciphered audio stream URLs.
+    // iOS and iPadOS clients provide reliable, unthrottled, unciphered audio stream URLs.
     private val playerClients = listOf(
         PlayerClient(
             "IOS", "20.10.4",
@@ -42,27 +42,75 @@ object YouTubeMusicClient {
             put("osName", "iPhone"); put("osVersion", "18.3.2.22D82")
         },
         PlayerClient(
-            "ANDROID_VR", "1.60.19",
-            "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
+            "IOS", "20.10.4",
+            "com.google.ios.youtube/20.10.4 (iPad14,3; U; CPU OS 18_3_2 like Mac OS X;)"
         ) {
-            put("deviceMake", "Oculus"); put("deviceModel", "Quest 3")
-            put("androidSdkVersion", 32); put("osName", "Android"); put("osVersion", "12L")
+            put("deviceMake", "Apple"); put("deviceModel", "iPad14,3")
+            put("osName", "iPadOS"); put("osVersion", "18.3.2.22D82")
         },
         PlayerClient(
-            "ANDROID_MUSIC", "7.27.52",
-            "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 11) gzip"
-        ) { put("androidSdkVersion", 30); put("osName", "Android"); put("osVersion", "11") }
+            "IOS", "19.49.5",
+            "com.google.ios.youtube/19.49.5 (iPhone15,3; U; CPU iOS 17_6_1 like Mac OS X;)"
+        ) {
+            put("deviceMake", "Apple"); put("deviceModel", "iPhone15,3")
+            put("osName", "iPhone"); put("osVersion", "17.6.1.21G93")
+        }
     )
 
-    /** Fetches a fresh anonymous visitor id from YouTube Music. Returns null on failure. */
+    /** Fetches a fresh anonymous visitor id from YouTube Music using visitor_id or browse endpoints. */
     suspend fun fetchVisitorData(): String? = withContext(Dispatchers.IO) {
+        // Attempt 1: Direct visitor_id endpoint
+        try {
+            val body = JSONObject().put("context", webContext(null))
+            val req = Request.Builder()
+                .url("$BASE/visitor_id?prettyPrint=false")
+                .post(body.toString().toRequestBody(JSON))
+                .header("User-Agent", NetworkModule.UA_WEB)
+                .header("Origin", ORIGIN)
+                .header("Referer", "$ORIGIN/")
+                .build()
+
+            NetworkModule.apiClient.newCall(req).execute().use { resp ->
+                val hdr = resp.header("X-Goog-Visitor-Id")?.takeIf { it.isNotBlank() }
+                if (hdr != null) return@withContext hdr
+
+                val bodyStr = resp.body?.string().orEmpty()
+                if (bodyStr.isNotBlank()) {
+                    val json = JSONObject(bodyStr)
+                    val visitor = json.optJSONObject("responseContext")?.optString("visitorData")
+                    if (!visitor.isNullOrBlank()) return@withContext visitor
+                }
+            }
+        } catch (e: Throwable) {
+            android.util.Log.w("YouTubeMusicClient", "visitor_id fetch failed: ${e.message}")
+        }
+
+        // Attempt 2: Browse endpoint
         try {
             val body = JSONObject().put("context", webContext(null)).put("browseId", "FEmusic_home")
-            val json = post("browse", body, visitorId = null, userAgent = NetworkModule.UA_WEB)
-            json.optJSONObject("responseContext")?.optString("visitorData")?.takeIf { it.isNotBlank() }
-        } catch (_: Exception) {
-            null
+            val req = Request.Builder()
+                .url("$BASE/browse?prettyPrint=false")
+                .post(body.toString().toRequestBody(JSON))
+                .header("User-Agent", NetworkModule.UA_WEB)
+                .header("Origin", ORIGIN)
+                .header("Referer", "$ORIGIN/")
+                .build()
+
+            NetworkModule.apiClient.newCall(req).execute().use { resp ->
+                val hdr = resp.header("X-Goog-Visitor-Id")?.takeIf { it.isNotBlank() }
+                if (hdr != null) return@withContext hdr
+
+                val bodyStr = resp.body?.string().orEmpty()
+                if (bodyStr.isNotBlank()) {
+                    val json = JSONObject(bodyStr)
+                    val visitor = json.optJSONObject("responseContext")?.optString("visitorData")
+                    if (!visitor.isNullOrBlank()) return@withContext visitor
+                }
+            }
+        } catch (e: Throwable) {
+            android.util.Log.w("YouTubeMusicClient", "browse visitor fetch failed: ${e.message}")
         }
+        null
     }
 
     /** Returns the saved visitor id, generating and saving one if none is set. */
@@ -88,6 +136,39 @@ object YouTubeMusicClient {
             android.util.Log.w("YouTubeMusicClient", "searchSongs failed for '$query': ${e.message}")
             emptyList()
         }
+    }
+
+    /**
+     * Finds the closest matching track for a specific title and artist.
+     */
+    suspend fun findMatchingSong(title: String, artist: String): SongsModel? = withContext(Dispatchers.IO) {
+        val cleanT = title.trim().lowercase()
+        val cleanA = artist.trim().lowercase()
+        val query = "$title $artist".trim()
+        val results = searchSongs(query)
+        if (results.isEmpty()) return@withContext null
+
+        // 1. Exact title + artist match
+        val exact = results.firstOrNull { r ->
+            val rt = r.title.lowercase().trim()
+            val ra = r.singer.lowercase().trim()
+            (rt == cleanT || rt.contains(cleanT) || cleanT.contains(rt)) &&
+            (cleanA.isBlank() || ra.contains(cleanA) || cleanA.contains(ra))
+        }
+        if (exact != null) return@withContext exact
+
+        // 2. Exact title match
+        val titleMatch = results.firstOrNull { r ->
+            val rt = r.title.lowercase().trim()
+            rt == cleanT || (cleanT.length > 3 && rt.contains(cleanT))
+        }
+        if (titleMatch != null) return@withContext titleMatch
+
+        // 3. Fallback to first result if artist or title has significant token overlap
+        results.firstOrNull { r ->
+            val words = cleanT.split(" ").filter { it.length > 2 }
+            words.isNotEmpty() && words.any { r.title.lowercase().contains(it) }
+        } ?: results.firstOrNull()
     }
 
     /** Fetches real-time trending global music tracks. */
@@ -160,8 +241,8 @@ object YouTubeMusicClient {
                 if (status != "OK") continue
                 val url = pickAudioUrl(json)
                 if (url != null) return@withContext url
-            } catch (_: Throwable) {
-                // try next client
+            } catch (e: Throwable) {
+                android.util.Log.w("YouTubeMusicClient", "resolveStreamUrl client ${client.name} error: ${e.message}")
             }
         }
         null

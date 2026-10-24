@@ -24,8 +24,9 @@ object AudioStreamResolver {
 
     /**
      * Resolves a direct, unthrottled studio-grade audio stream URL.
-     * Prioritizes the known YouTube video ID if provided, seamlessly falling back
-     * to JioSaavn 320 kbps master streams, and finally dynamic YouTube search.
+     * Prioritizes the exact YouTube video ID matching the user's selected track,
+     * seamlessly falling back to targeted YouTube Music search, and finally
+     * strictly validated JioSaavn master streams where title and artist MUST match.
      */
     suspend fun resolveStream(
         title: String,
@@ -36,52 +37,30 @@ object AudioStreamResolver {
         val cleanArtist = cleanArtistName(singer)
         val query = "$cleanTitle $cleanArtist".trim()
 
-        Log.d(TAG, "Resolving master stream for query: '$query' (fallbackId: $fallbackVideoId)")
+        Log.d(TAG, "Resolving master stream for: '$title' by '$singer' (fallbackId: $fallbackVideoId)")
 
-        // Step 1 — If fallbackVideoId is not blank, resolve direct YouTube stream
+        // Step 1 — Primary: Resolve direct stream for known YouTube videoId
         if (fallbackVideoId.isNotBlank()) {
-            Log.d(TAG, "Resolving stream for known videoId: $fallbackVideoId")
+            Log.d(TAG, "Attempting direct resolution for videoId: $fallbackVideoId")
             val ytStream = YouTubeMusicClient.resolveStreamUrl(fallbackVideoId)
             if (!ytStream.isNullOrBlank()) {
+                Log.d(TAG, "Successfully resolved direct YouTube stream for videoId: $fallbackVideoId")
                 return@withContext ResolvedAudioStream(
                     url = ytStream,
                     audioBadge = "LOSSLESS • FLAC"
                 )
             }
+            Log.w(TAG, "Direct resolution failed for videoId $fallbackVideoId; searching YouTube for matching track")
         }
 
-        // Step 2 — JioSaavn direct search
-        val saavnDirectQuery = "$cleanTitle $cleanArtist".trim()
-        var saavnResult = searchSaavn(saavnDirectQuery)
-        if ((saavnResult == null || saavnResult.isBlank()) && cleanTitle.isNotBlank()) {
-            saavnResult = searchSaavn(cleanTitle)
-        }
-        if (!saavnResult.isNullOrBlank()) {
-            Log.d(TAG, "Successfully resolved Saavn 320kbps master stream: $saavnResult")
-            return@withContext ResolvedAudioStream(
-                url = saavnResult,
-                audioBadge = "LOSSLESS • 320 KBPS"
-            )
-        }
-
-        // Step 3 — JioSaavn autocomplete
-        val saavnAuto = autocompleteSaavn(saavnDirectQuery)
-        if (!saavnAuto.isNullOrBlank()) {
-            Log.d(TAG, "Successfully resolved Saavn autocomplete master stream: $saavnAuto")
-            return@withContext ResolvedAudioStream(
-                url = saavnAuto,
-                audioBadge = "LOSSLESS • 320 KBPS"
-            )
-        }
-
-        // Step 4 — Dynamic YouTube search (last resort only)
-        if (query.isNotBlank()) {
-            Log.d(TAG, "Falling back to dynamic YouTube search for: $query")
-            val ytSongs = YouTubeMusicClient.searchSongs(query)
-            val candidate = ytSongs.firstOrNull { it.youtubeVideoId.isNotBlank() && it.youtubeVideoId != fallbackVideoId }
-            if (candidate != null) {
-                val stream = YouTubeMusicClient.resolveStreamUrl(candidate.youtubeVideoId)
+        // Step 2 — Targeted YouTube search for matching song by title and artist
+        if (cleanTitle.isNotBlank()) {
+            Log.d(TAG, "Searching YouTube Music for best match: '$cleanTitle' by '$cleanArtist'")
+            val matchedYtTrack = YouTubeMusicClient.findMatchingSong(cleanTitle, cleanArtist)
+            if (matchedYtTrack != null && matchedYtTrack.youtubeVideoId.isNotBlank() && matchedYtTrack.youtubeVideoId != fallbackVideoId) {
+                val stream = YouTubeMusicClient.resolveStreamUrl(matchedYtTrack.youtubeVideoId)
                 if (!stream.isNullOrBlank()) {
+                    Log.d(TAG, "Successfully resolved stream via YouTube search: ${matchedYtTrack.title} (${matchedYtTrack.youtubeVideoId})")
                     return@withContext ResolvedAudioStream(
                         url = stream,
                         audioBadge = "LOSSLESS • FLAC"
@@ -90,12 +69,24 @@ object AudioStreamResolver {
             }
         }
 
+        // Step 3 — Strictly validated JioSaavn 320kbps master stream (title AND artist must match)
+        if (cleanTitle.isNotBlank()) {
+            val saavnResult = searchSaavnStrict(cleanTitle, cleanArtist, prefer320 = true)
+            if (!saavnResult.isNullOrBlank()) {
+                Log.d(TAG, "Successfully resolved strictly-matched Saavn 320kbps master stream: $saavnResult")
+                return@withContext ResolvedAudioStream(
+                    url = saavnResult,
+                    audioBadge = "LOSSLESS • 320 KBPS"
+                )
+            }
+        }
+
         Log.w(TAG, "Unable to resolve audio stream for '$title - $singer'")
         null
     }
 
     /**
-     * Resolves an audio stream specifically using JioSaavn, with configurable quality preference.
+     * Resolves an audio stream specifically using JioSaavn, with strict artist & title matching.
      */
     suspend fun resolveSaavnStream(
         title: String,
@@ -104,15 +95,8 @@ object AudioStreamResolver {
     ): ResolvedAudioStream? = withContext(Dispatchers.IO) {
         val cleanTitle = cleanTrackTitle(title)
         val cleanArtist = cleanArtistName(singer)
-        val query = "$cleanTitle $cleanArtist".trim()
 
-        var saavnUrl = searchSaavn(query, prefer320)
-        if (saavnUrl.isNullOrBlank() && cleanTitle.isNotBlank()) {
-            saavnUrl = searchSaavn(cleanTitle, prefer320)
-        }
-        if (saavnUrl.isNullOrBlank()) {
-            saavnUrl = autocompleteSaavn(query, prefer320)
-        }
+        val saavnUrl = searchSaavnStrict(cleanTitle, cleanArtist, prefer320)
         if (!saavnUrl.isNullOrBlank()) {
             val badge = if (prefer320 && saavnUrl.contains("_320.mp4")) "LOSSLESS • 320 KBPS" else "HIGH • 160 KBPS"
             ResolvedAudioStream(url = saavnUrl, audioBadge = badge)
@@ -121,11 +105,16 @@ object AudioStreamResolver {
         }
     }
 
-    private fun searchSaavn(query: String, prefer320: Boolean = true): String? {
-        if (query.isBlank()) return null
+    /**
+     * Searches JioSaavn and ensures the result strictly matches BOTH track title and artist name.
+     * Prevents mismatched songs from playing (e.g. playing random Bollywood songs for rock bands).
+     */
+    private fun searchSaavnStrict(title: String, artist: String, prefer320: Boolean = true): String? {
+        if (title.isBlank()) return null
         return try {
+            val query = if (artist.isNotBlank()) "$title $artist" else title
             val encodedQuery = URLEncoder.encode(query, "UTF-8")
-            val url = "https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&cc=in&p=1&n=5&q=$encodedQuery"
+            val url = "https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&cc=in&p=1&n=8&q=$encodedQuery"
             val req = Request.Builder()
                 .url(url)
                 .header("User-Agent", USER_AGENT)
@@ -138,77 +127,81 @@ object AudioStreamResolver {
             val json = JSONObject(body)
             val results = json.optJSONArray("results") ?: return null
 
-            val queryWords = query.lowercase().split(" ", "_", "-", "(", ")", "\"", "'")
-                .map { it.trim() }
-                .filter { it.length > 2 && it != "official" && it != "audio" && it != "video" && it != "song" }
-
             for (i in 0 until results.length()) {
                 val item = results.optJSONObject(i) ?: continue
-                val songTitle = item.optString("song").lowercase()
+                val saavnTitle = item.optString("song", "")
+                val saavnSingers = item.optString("singers", "") + " " + item.optString("primary_artists", "")
 
-                // Validate that the Saavn result is actually relevant to the searched song
-                val isRelevant = queryWords.isEmpty() || queryWords.any { songTitle.contains(it) }
-                if (!isRelevant) continue
-
-                val encrypted = item.optString("encrypted_media_url")
-                if (encrypted.isNotBlank()) {
-                    val decrypted = decryptMediaUrl(encrypted, prefer320)
-                    if (!decrypted.isNullOrBlank()) {
-                        return decrypted
+                if (isStrictMatch(title, artist, saavnTitle, saavnSingers)) {
+                    val encrypted = item.optString("encrypted_media_url")
+                    if (encrypted.isNotBlank()) {
+                        val decrypted = decryptMediaUrl(encrypted, prefer320)
+                        if (!decrypted.isNullOrBlank()) {
+                            return decrypted
+                        }
                     }
                 }
             }
             null
         } catch (e: Exception) {
-            Log.w(TAG, "searchSaavn failed: ${e.message}")
+            Log.w(TAG, "searchSaavnStrict failed: ${e.message}")
             null
         }
     }
 
-    private fun autocompleteSaavn(query: String, prefer320: Boolean = true): String? {
-        if (query.isBlank()) return null
-        return try {
-            val encodedQuery = URLEncoder.encode(query, "UTF-8")
-            val url = "https://www.jiosaavn.com/api.php?__call=autocomplete.get&_format=json&_marker=0&cc=in&includeMetaTags=1&query=$encodedQuery"
-            val req = Request.Builder()
-                .url(url)
-                .header("User-Agent", USER_AGENT)
-                .build()
+    /**
+     * Strictly verifies whether a candidate track is an authentic match for the requested song and artist.
+     */
+    private fun isStrictMatch(
+        reqTitle: String,
+        reqArtist: String,
+        candTitle: String,
+        candSingers: String
+    ): Boolean {
+        val normReqTitle = normalizeString(reqTitle)
+        val normCandTitle = normalizeString(candTitle)
 
-            val response = NetworkModule.apiClient.newCall(req).execute()
-            val body = response.body?.string().orEmpty()
-            if (body.isBlank()) return null
+        // 1. Title verification
+        val titleMatches = when {
+            normReqTitle.isEmpty() || normCandTitle.isEmpty() -> false
+            normReqTitle == normCandTitle -> true
+            normCandTitle.contains(normReqTitle) && normReqTitle.length >= 3 -> true
+            normReqTitle.contains(normCandTitle) && normCandTitle.length >= 3 -> true
+            else -> {
+                val reqWords = normReqTitle.split(" ").filter { it.length > 2 }
+                val candWords = normCandTitle.split(" ").filter { it.length > 2 }
+                reqWords.isNotEmpty() && reqWords.all { candWords.contains(it) }
+            }
+        }
+        if (!titleMatches) return false
 
-            val json = JSONObject(body)
-            val songsObj = json.optJSONObject("songs") ?: return null
-            val dataArr = songsObj.optJSONArray("data") ?: return null
-            if (dataArr.length() == 0) return null
+        // 2. Artist verification (if requested artist is non-empty)
+        val normReqArtist = normalizeString(reqArtist)
+        val normCandSingers = normalizeString(candSingers)
 
-            val queryWords = query.lowercase().split(" ", "_", "-", "(", ")", "\"", "'")
-                .map { it.trim() }
-                .filter { it.length > 2 && it != "official" && it != "audio" && it != "video" && it != "song" && it != "bangladesh" }
-
-            for (i in 0 until dataArr.length()) {
-                val candidateSong = dataArr.optJSONObject(i) ?: continue
-                val songTitle = candidateSong.optString("title").lowercase()
-
-                val isRelevant = queryWords.isEmpty() || queryWords.any { songTitle.contains(it) }
-                if (!isRelevant) continue
-
-                val songId = candidateSong.optString("id")
-                if (songId.isNotBlank()) {
-                    val stream = fetchSongDetails(songId, prefer320)
-                    if (!stream.isNullOrBlank()) {
-                        return stream
-                    }
+        if (normReqArtist.isNotBlank()) {
+            val artistMatches = when {
+                normCandSingers.isBlank() -> true // If candidate lacks artist metadata, accept title match
+                normCandSingers.contains(normReqArtist) || normReqArtist.contains(normCandSingers) -> true
+                else -> {
+                    val artistWords = normReqArtist.split(" ").filter { it.length > 2 }
+                    artistWords.isNotEmpty() && artistWords.any { normCandSingers.contains(it) }
                 }
             }
-            null
-        } catch (e: Exception) {
-            Log.w(TAG, "autocompleteSaavn failed: ${e.message}")
-            null
+            if (!artistMatches) return false
         }
+
+        return true
     }
+
+    private fun normalizeString(text: String): String {
+        return text.lowercase()
+            .replace(Regex("[^a-z0-9\\s]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
+
 
     private fun fetchSongDetails(songId: String, prefer320: Boolean = true): String? {
         return try {

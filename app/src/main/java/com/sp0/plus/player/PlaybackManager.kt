@@ -54,6 +54,7 @@ object PlaybackManager {
 
     private val playbackToken = AtomicLong(0L)
     val currentPlaybackToken: Long get() = playbackToken.get()
+    private val retryAttempts = java.util.concurrent.atomic.AtomicInteger(0)
 
     private var currentStreamSource = StreamSource.OTHER
     private var pendingFadeIn = false
@@ -174,19 +175,13 @@ object PlaybackManager {
 
     private fun applyPlayerVolume(volume: Float) {
         val clamped = volume.coerceIn(0f, 1f)
-        val p = PlaybackService.instance?.player ?: mediaController
-        if (p != null) {
-            try { p.volume = clamped } catch (_: Throwable) {}
-        }
-        PlaybackService.instance?.player?.let { sp ->
-            if (sp != p) {
-                try { sp.volume = clamped } catch (_: Throwable) {}
-            }
-        }
-        mediaController?.let { mc ->
-            if (mc != p) {
-                try { mc.volume = clamped } catch (_: Throwable) {}
-            }
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            try {
+                PlaybackService.instance?.player?.volume = clamped
+            } catch (_: Throwable) {}
+            try {
+                mediaController?.volume = clamped
+            } catch (_: Throwable) {}
         }
         DualSpeakerManager.setVolume(clamped)
     }
@@ -286,6 +281,13 @@ object PlaybackManager {
         }
     }
 
+    fun onStreamUnavailable(message: String) {
+        _isPending.value = false
+        _isBuffering.value = false
+        _isPlaying.value = false
+        _streamError.value = message
+    }
+
     fun handlePlayerError(error: androidx.media3.common.PlaybackException) {
         val myToken = playbackToken.get()
         val track = _currentTrack.value
@@ -298,53 +300,53 @@ object PlaybackManager {
                 error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED ||
                 (error.message?.contains("Source error", ignoreCase = true) == true)
 
-        if (track != null && isSourceError) {
-            when (currentStreamSource) {
-                StreamSource.YOUTUBE -> {
-                    android.util.Log.w("PlaybackManager", "YouTube direct stream failed with source error for '${track.title}'. Retrying with JioSaavn master stream...")
+        if (track != null && isSourceError && retryAttempts.incrementAndGet() <= 1) {
+            android.util.Log.w("PlaybackManager", "Source error on '${track.title}'. Attempting recovery...")
+            retryJob?.cancel()
+            retryJob = scope.launch {
+                // 1. Try refreshing YouTube stream with a fresh visitor token
+                val freshVisitor = YouTubeMusicClient.fetchVisitorData().orEmpty()
+                if (freshVisitor.isNotBlank()) {
+                    SettingsManager.setVisitorData(freshVisitor)
+                }
+                if (track.youtubeVideoId.isNotBlank()) {
+                    val freshYtStream = YouTubeMusicClient.resolveStreamUrl(track.youtubeVideoId)
+                    if (!freshYtStream.isNullOrBlank() && playbackToken.get() == myToken) {
+                        currentStreamSource = StreamSource.YOUTUBE
+                        _audioQualityBadge.value = "LOSSLESS • FLAC"
+                        executePlayback(track, freshYtStream, myToken)
+                        return@launch
+                    }
+                }
+
+                // 2. Try searching YouTube Music for an alternate official stream
+                val alternateYt = YouTubeMusicClient.findMatchingSong(track.title, track.singer)
+                if (alternateYt != null && alternateYt.youtubeVideoId.isNotBlank() && alternateYt.youtubeVideoId != track.youtubeVideoId) {
+                    val altStream = YouTubeMusicClient.resolveStreamUrl(alternateYt.youtubeVideoId)
+                    if (!altStream.isNullOrBlank() && playbackToken.get() == myToken) {
+                        currentStreamSource = StreamSource.YOUTUBE
+                        _audioQualityBadge.value = "LOSSLESS • FLAC"
+                        executePlayback(track, altStream, myToken)
+                        return@launch
+                    }
+                }
+
+                // 3. Fallback to strictly verified JioSaavn stream (artist and title MUST match)
+                val saavn = AudioStreamResolver.resolveSaavnStream(track.title, track.singer, prefer320 = true)
+                if (saavn != null && playbackToken.get() == myToken) {
                     currentStreamSource = StreamSource.SAAVN_320
-                    retryJob?.cancel()
-                    retryJob = scope.launch {
-                        val saavn = AudioStreamResolver.resolveSaavnStream(track.title, track.singer, prefer320 = true)
-                        if (saavn != null && playbackToken.get() == myToken) {
-                            _audioQualityBadge.value = saavn.audioBadge
-                            executePlayback(track, saavn.url, myToken)
-                            return@launch
-                        }
-                        val saavn160 = AudioStreamResolver.resolveSaavnStream(track.title, track.singer, prefer320 = false)
-                        if (saavn160 != null && playbackToken.get() == myToken) {
-                            currentStreamSource = StreamSource.SAAVN_160
-                            _audioQualityBadge.value = saavn160.audioBadge
-                            executePlayback(track, saavn160.url, myToken)
-                            return@launch
-                        }
-                        _isPending.value = false
-                        _isBuffering.value = false
-                        _isPlaying.value = false
-                        _streamError.value = "Playback error: Source error (stream unavailable)"
-                    }
-                    return
+                    _audioQualityBadge.value = saavn.audioBadge
+                    executePlayback(track, saavn.url, myToken)
+                    return@launch
                 }
-                StreamSource.SAAVN_320 -> {
-                    android.util.Log.w("PlaybackManager", "Saavn 320k stream failed for '${track.title}'. Retrying with 160k stream...")
-                    currentStreamSource = StreamSource.SAAVN_160
-                    retryJob?.cancel()
-                    retryJob = scope.launch {
-                        val saavn160 = AudioStreamResolver.resolveSaavnStream(track.title, track.singer, prefer320 = false)
-                        if (saavn160 != null && playbackToken.get() == myToken) {
-                            _audioQualityBadge.value = saavn160.audioBadge
-                            executePlayback(track, saavn160.url, myToken)
-                            return@launch
-                        }
-                        _isPending.value = false
-                        _isBuffering.value = false
-                        _isPlaying.value = false
-                        _streamError.value = "Playback error: Source error (stream unavailable)"
-                    }
-                    return
-                }
-                else -> {}
+
+                // If all recovery avenues fail, report cleanly without looping
+                _isPending.value = false
+                _isBuffering.value = false
+                _isPlaying.value = false
+                _streamError.value = "Playback error: Stream for \"${track.title}\" is currently unavailable"
             }
+            return
         }
 
         android.util.Log.e("PlaybackManager", "Player error: ${error.errorCodeName} - ${error.message}", error)
@@ -415,17 +417,22 @@ object PlaybackManager {
             DualSpeakerManager.stop()
             _isPlayerExpanded.value = true
 
+            retryAttempts.set(0)
             val shouldFadeIn = pendingFadeIn || SettingsManager.fadeEffectsEnabled.value || (SettingsManager.crossfadeEnabled.value && SettingsManager.crossfadeDurationMs.value > 0)
             pendingFadeIn = shouldFadeIn
 
             applyPlayerVolume(if (shouldFadeIn) 0f else 1f)
-            PlaybackService.instance?.player?.let { p ->
-                p.stop()
-                p.clearMediaItems()
-            }
-            mediaController?.let { c ->
-                c.stop()
-                c.clearMediaItems()
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                try {
+                    PlaybackService.instance?.player?.let { p ->
+                        p.stop()
+                        p.clearMediaItems()
+                    }
+                    mediaController?.let { c ->
+                        c.stop()
+                        c.clearMediaItems()
+                    }
+                } catch (_: Throwable) {}
             }
 
             if (newQueue != null && newQueue.isNotEmpty()) {
@@ -732,7 +739,11 @@ object PlaybackManager {
         val clamped = posMs.coerceIn(0L, _durationMs.value)
         _positionMs.value = clamped
         updateActiveLyricIndex(clamped)
-        PlaybackService.instance?.player?.seekTo(clamped) ?: mediaController?.seekTo(clamped)
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            try {
+                PlaybackService.instance?.player?.seekTo(clamped) ?: mediaController?.seekTo(clamped)
+            } catch (_: Throwable) {}
+        }
         val crossfadeMs = SettingsManager.crossfadeDurationMs.value.toLong()
         if (_durationMs.value - clamped > crossfadeMs) {
             applyPlayerVolume(1f)

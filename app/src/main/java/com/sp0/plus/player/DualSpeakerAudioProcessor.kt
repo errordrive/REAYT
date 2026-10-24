@@ -28,43 +28,61 @@ class DualSpeakerAudioProcessor : BaseAudioProcessor() {
         val remaining = inputBuffer.remaining()
         if (remaining == 0) return
 
-        if (!DualSpeakerManager.isVirtualStereoEnabled) {
-            // Normal passthrough
-            val outputBuffer = replaceOutputBuffer(remaining)
-            outputBuffer.put(inputBuffer)
+        try {
+            if (!DualSpeakerManager.isVirtualStereoEnabled) {
+                // Normal passthrough
+                val outputBuffer = replaceOutputBuffer(remaining)
+                outputBuffer.put(inputBuffer)
+                outputBuffer.flip()
+                return
+            }
+
+            // Stereo split mode:
+            // Left channel goes to Earpiece speaker (mono PCM 16-bit)
+            // Right channel goes to main Loudspeaker (duplicated across stereo L/R so loudspeaker outputs pure Right)
+            val numFrames = remaining / 4 // 4 bytes per stereo 16-bit frame (L: 2 bytes, R: 2 bytes)
+            val processableBytes = numFrames * 4
+            val leftBytesCount = numFrames * 2
+
+            if (leftBuffer.capacity() < leftBytesCount) {
+                leftBuffer = ByteBuffer.allocateDirect(leftBytesCount).order(ByteOrder.LITTLE_ENDIAN)
+            }
+            leftBuffer.clear()
+
+            val outputBuffer = replaceOutputBuffer(processableBytes)
+
+            for (i in 0 until numFrames) {
+                val left = inputBuffer.short
+                val right = inputBuffer.short
+
+                // Earpiece gets Left channel
+                leftBuffer.putShort(left)
+
+                // Main loudspeaker gets Right channel
+                outputBuffer.putShort(right)
+                outputBuffer.putShort(right)
+            }
+
+            // Consume any unaligned trailing bytes so ExoPlayer input buffer contract is satisfied
+            while (inputBuffer.hasRemaining()) {
+                inputBuffer.get()
+            }
+
+            leftBuffer.flip()
             outputBuffer.flip()
-            return
+
+            DualSpeakerManager.writeLeftChannelAudio(leftBuffer)
+        } catch (e: Throwable) {
+            android.util.Log.w("DualSpeakerAudioProcessor", "queueInput exception: ${e.message}")
+            try {
+                val rem = inputBuffer.remaining()
+                val out = replaceOutputBuffer(rem)
+                out.put(inputBuffer)
+                out.flip()
+            } catch (_: Throwable) {
+                inputBuffer.position(inputBuffer.limit())
+            }
         }
-
-        // Stereo split mode:
-        // Left channel goes to Earpiece speaker (mono PCM 16-bit)
-        // Right channel goes to main Loudspeaker (duplicated across stereo L/R so loudspeaker outputs pure Right)
-        val numSamples = remaining / 4 // 4 bytes per stereo 16-bit frame (L: 2 bytes, R: 2 bytes)
-        val leftBytesCount = numSamples * 2
-
-        if (leftBuffer.capacity() < leftBytesCount) {
-            leftBuffer = ByteBuffer.allocateDirect(leftBytesCount).order(ByteOrder.LITTLE_ENDIAN)
-        }
-        leftBuffer.clear()
-
-        val outputBuffer = replaceOutputBuffer(remaining)
-
-        while (inputBuffer.remaining() >= 4) {
-            val left = inputBuffer.short
-            val right = inputBuffer.short
-
-            // Earpiece gets Left channel
-            leftBuffer.putShort(left)
-
-            // Main loudspeaker gets Right channel
-            outputBuffer.putShort(right)
-            outputBuffer.putShort(right)
-        }
-
-        leftBuffer.flip()
-        outputBuffer.flip()
-
-        DualSpeakerManager.writeLeftChannelAudio(leftBuffer)
     }
 
     override fun onFlush() {

@@ -1,6 +1,9 @@
 package com.sp0.plus
 
 import android.app.Application
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import com.sp0.plus.data.LikesManager
 import com.sp0.plus.data.PlayHistoryManager
 import com.sp0.plus.data.SettingsManager
@@ -17,5 +20,12 @@ class MyApplication : Application() {
         DownloadManager.init(this)
         PlayHistoryManager.init(this)
         UserPlaylistManager.init(this)
+
+        // Prime anonymous visitor token asynchronously on startup
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            try {
+                com.sp0.plus.data.YouTubeMusicClient.ensureVisitorData()
+            } catch (_: Throwable) {}
+        }
     }
 }
