@@ -171,6 +171,96 @@ object YouTubeMusicClient {
         } ?: results.firstOrNull()
     }
 
+    /**
+     * Fetches radio / recommended tracks related to the specified track [videoId].
+     * Uses YouTube Music's native 'RDAMVM' endless Radio context matching user interest.
+     */
+    suspend fun fetchRadioRecommendations(videoId: String, title: String = "", artist: String = ""): List<SongsModel> = withContext(Dispatchers.IO) {
+        if (videoId.isBlank() && title.isBlank()) return@withContext emptyList()
+        val visitor = try { ensureVisitorData() } catch (_: Throwable) { "" }
+
+        // Method 1: YouTube Music /next with RDAMVM + videoId
+        if (videoId.isNotBlank()) {
+            try {
+                val body = JSONObject()
+                    .put("context", webContext(visitor))
+                    .put("videoId", videoId)
+                    .put("playlistId", "RDAMVM$videoId")
+                val json = post("next", body, visitor, NetworkModule.UA_WEB)
+                val recommendations = parseRadioContents(json, currentVideoId = videoId)
+                if (recommendations.isNotEmpty()) {
+                    return@withContext recommendations
+                }
+            } catch (e: Throwable) {
+                android.util.Log.w("YouTubeMusicClient", "RDAMVM radio fetch failed: ${e.message}")
+            }
+        }
+
+        // Method 2: Fallback to targeted search for same artist or title
+        try {
+            val query = if (artist.isNotBlank()) "$artist music" else "$title music"
+            val searchResults = searchSongs(query).filter { it.youtubeVideoId != videoId }
+            if (searchResults.isNotEmpty()) {
+                return@withContext searchResults
+            }
+        } catch (_: Throwable) {}
+
+        emptyList()
+    }
+
+    private fun parseRadioContents(root: JSONObject, currentVideoId: String): List<SongsModel> {
+        val out = mutableListOf<SongsModel>()
+        try {
+            val tabs = root.optJSONObject("contents")
+                ?.optJSONObject("singleColumnMusicWatchNextResultsRenderer")
+                ?.optJSONObject("tabbedRenderer")
+                ?.optJSONObject("watchNextTabbedResultsRenderer")
+                ?.optJSONArray("tabs") ?: return out
+
+            val upNext = tabs.optJSONObject(0)?.optJSONObject("tabRenderer")?.optJSONObject("content")
+            val items = upNext?.optJSONObject("musicQueueRenderer")
+                ?.optJSONObject("content")
+                ?.optJSONObject("playlistPanelRenderer")
+                ?.optJSONArray("contents") ?: return out
+
+            for (i in 0 until items.length()) {
+                val r = items.optJSONObject(i)?.optJSONObject("playlistPanelVideoRenderer") ?: continue
+                val vId = r.optString("videoId")
+                if (vId.isBlank() || vId == currentVideoId) continue
+
+                val tRuns = r.optJSONObject("title")?.optJSONArray("runs")
+                val title = tRuns?.optJSONObject(0)?.optString("text").orEmpty()
+                if (title.isBlank()) continue
+
+                val bRuns = r.optJSONObject("shortBylineText")?.optJSONArray("runs")
+                val artist = bRuns?.optJSONObject(0)?.optString("text").orEmpty()
+                val album = if (bRuns != null && bRuns.length() > 2) bRuns.optJSONObject(2)?.optString("text").orEmpty() else ""
+
+                val thumbs = r.optJSONObject("thumbnail")?.optJSONArray("thumbnails")
+                val cover = thumbs?.optJSONObject(thumbs.length() - 1)?.optString("url").orEmpty()
+                    .replace(Regex("=w\\d+-h\\d+.*$"), "=w600-h600")
+
+                out.add(
+                    SongsModel(
+                        id = vId,
+                        title = title,
+                        album = album,
+                        singer = artist,
+                        coverUri = cover,
+                        url = "",
+                        youtubeVideoId = vId,
+                        durationMs = 0L,
+                        audioFormat = "LOSSLESS • FLAC",
+                        isLiked = false
+                    )
+                )
+            }
+        } catch (e: Throwable) {
+            android.util.Log.w("YouTubeMusicClient", "parseRadioContents error: ${e.message}")
+        }
+        return out
+    }
+
     /** Fetches real-time trending global music tracks. */
     suspend fun fetchTrending(): List<SongsModel> = withContext(Dispatchers.IO) {
         val results = searchSongs("Trending Top Hits 2024")

@@ -448,6 +448,26 @@ object PlaybackManager {
                 }
             }
 
+            // If playing an isolated track, proactively preload radio recommendations matching user interest
+            if (_queue.value.size <= 1) {
+                scope.launch {
+                    try {
+                        val recs = YouTubeMusicClient.fetchRadioRecommendations(
+                            videoId = track.youtubeVideoId,
+                            title = track.title,
+                            artist = track.singer
+                        )
+                        val qNow = _queue.value
+                        if (qNow.size <= 1 && qNow.any { it.id == track.id }) {
+                            val newRecs = recs.filter { it.youtubeVideoId != track.youtubeVideoId }
+                            if (newRecs.isNotEmpty()) {
+                                _queue.value = qNow + newRecs
+                            }
+                        }
+                    } catch (_: Throwable) {}
+                }
+            }
+
             val trackId = track.youtubeVideoId.ifBlank { track.id }
             _currentTrack.value = track
             _durationMs.value = if (track.durationMs > 0) track.durationMs else 180000L
@@ -692,6 +712,11 @@ object PlaybackManager {
                 if (_repeatMode.value == RepeatMode.ALL) {
                     nextIdx = 0
                 } else {
+                    // Reached end of current queue; auto-recommend next song matching track interest
+                    val current = _currentTrack.value
+                    if (current != null) {
+                        playNextRecommendedSong(current)
+                    }
                     return
                 }
             }
@@ -807,10 +832,58 @@ object PlaybackManager {
                     pendingFadeIn = SettingsManager.fadeEffectsEnabled.value || (SettingsManager.crossfadeEnabled.value && SettingsManager.crossfadeDurationMs.value > 0)
                     skipNext()
                 } else {
+                    // Reached end of current queue / playlist / single song played!
+                    // Auto-play / Radio Mode: Keep recommending and playing songs matching track interest
+                    val current = _currentTrack.value
+                    if (current != null) {
+                        playNextRecommendedSong(current)
+                    } else {
+                        _isPlaying.value = false
+                        applyPlayerVolume(1f)
+                        seekTo(0L)
+                    }
+                }
+            }
+        }
+    }
+
+    private var isFetchingRecommendations = false
+
+    private fun playNextRecommendedSong(track: SongsModel) {
+        if (isFetchingRecommendations) return
+        isFetchingRecommendations = true
+        _isBuffering.value = true
+
+        scope.launch {
+            try {
+                val recommendations = YouTubeMusicClient.fetchRadioRecommendations(
+                    videoId = track.youtubeVideoId,
+                    title = track.title,
+                    artist = track.singer
+                )
+                val currentQueueIds = _queue.value.map { it.youtubeVideoId }.toSet()
+                val newSongs = recommendations.filter { it.youtubeVideoId.isNotBlank() && it.youtubeVideoId !in currentQueueIds }
+
+                if (newSongs.isNotEmpty()) {
+                    val nextTrack = newSongs.first()
+                    _queue.value = _queue.value + newSongs
+                    _currentIndex.value = _queue.value.indexOfFirst { it.id == nextTrack.id }.coerceAtLeast(0)
+                    pendingFadeIn = SettingsManager.fadeEffectsEnabled.value || (SettingsManager.crossfadeEnabled.value && SettingsManager.crossfadeDurationMs.value > 0)
+                    playTrack(nextTrack, _queue.value)
+                } else {
                     _isPlaying.value = false
+                    _isBuffering.value = false
                     applyPlayerVolume(1f)
                     seekTo(0L)
                 }
+            } catch (e: Throwable) {
+                android.util.Log.e("PlaybackManager", "playNextRecommendedSong error: ${e.message}")
+                _isPlaying.value = false
+                _isBuffering.value = false
+                applyPlayerVolume(1f)
+                seekTo(0L)
+            } finally {
+                isFetchingRecommendations = false
             }
         }
     }
