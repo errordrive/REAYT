@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.reayt.youtube.model.YouTubeVideo
 import com.reayt.youtube.ui.components.YouTubeTopBar
+import com.reayt.youtube.ui.theme.AppIcons
 import com.reayt.youtube.ui.viewmodel.YouViewModel
 import org.koin.androidx.compose.koinViewModel
 
@@ -172,7 +173,7 @@ fun YouScreen(
                     headlineContent = { Text("Liked videos") },
                     supportingContent = { Text("${likedVideos.size} videos") },
                     leadingContent = {
-                        Icon(Icons.Default.ThumbUp, contentDescription = null)
+                        Icon(AppIcons.ThumbUp, contentDescription = null)
                     },
                     modifier = Modifier.clickable {}
                 )
@@ -180,7 +181,7 @@ fun YouScreen(
                     headlineContent = { Text("Watch Later") },
                     supportingContent = { Text("${watchLaterVideos.size} videos") },
                     leadingContent = {
-                        Icon(Icons.Default.WatchLater, contentDescription = null)
+                        Icon(AppIcons.WatchLater, contentDescription = null)
                     },
                     modifier = Modifier.clickable {}
                 )
@@ -188,7 +189,7 @@ fun YouScreen(
                     headlineContent = { Text("Downloads") },
                     supportingContent = { Text("Available offline") },
                     leadingContent = {
-                        Icon(Icons.Default.Download, contentDescription = null)
+                        Icon(AppIcons.Download, contentDescription = null)
                     },
                     modifier = Modifier.clickable {}
                 )

@@ -1,27 +1,21 @@
 package com.reayt.youtube.ui.components
 
-import android.content.Context
-import android.media.AudioManager
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.outlined.ThumbDown
-import androidx.compose.material.icons.outlined.ThumbUp
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -34,23 +28,20 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
-import com.reayt.youtube.model.YouTubeVideo
 import com.reayt.youtube.player.PlayerStateHolder
+import com.reayt.youtube.ui.theme.AppIcons
 import com.reayt.youtube.ui.theme.YouTubeRed
 import com.reayt.youtube.ui.viewmodel.WatchViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlin.math.roundToInt
 
 @Composable
 fun YouTubeRootPlayer(
@@ -90,12 +81,10 @@ fun YouTubeRootPlayer(
 
     val progress = playerStateHolder.miniPlayerProgress.value
     val isMini = progress >= 0.95f
-    val isExpanded = progress <= 0.05f
 
     var showControls by remember { mutableStateOf(false) }
     var isSeeking by remember { mutableStateOf(false) }
     var scrubPositionMs by remember { mutableLongStateOf(0L) }
-    var showCommentsSheet by remember { mutableStateOf(false) }
 
     // Intercept back button: fullscreen -> exit fullscreen; expanded -> minimise; mini -> normal back
     BackHandler(enabled = currentVideo != null) {
@@ -140,14 +129,12 @@ fun YouTubeRootPlayer(
                         val velocityY = velocityTracker.calculateVelocity().y
                         coroutineScope.launch {
                             if (isMini) {
-                                // Horizontal swipe dismiss in mini mode
                                 if (kotlin.math.abs(horizontalMiniSwipeOffset) > screenWidthPx * 0.35f) {
                                     playerStateHolder.dismissPlayer()
                                 } else {
                                     horizontalMiniSwipeOffset = 0f
                                 }
                             } else {
-                                // Vertical drag release
                                 if (velocityY > 800f || progress > 0.35f) {
                                     playerStateHolder.miniPlayerProgress.animateTo(
                                         1f,
@@ -166,7 +153,6 @@ fun YouTubeRootPlayer(
                         change.consume()
                         velocityTracker.addPosition(change.uptimeMillis, change.position)
                         if (isMini) {
-                            // Drag up to expand or horizontal swipe to dismiss
                             if (dragAmount.y < -10f) {
                                 coroutineScope.launch {
                                     playerStateHolder.miniPlayerProgress.animateTo(0f, spring(stiffness = 400f))
@@ -214,7 +200,7 @@ fun YouTubeRootPlayer(
                         }
                     }
             ) {
-                // Media3 AndroidView Video Surface (Hosted once at the root)
+                // Media3 AndroidView Video Surface (Hosted once at root)
                 AndroidView(
                     factory = { ctx ->
                         PlayerView(ctx).apply {
@@ -258,7 +244,7 @@ fun YouTubeRootPlayer(
                                 }
                             }) {
                                 Icon(
-                                    imageVector = Icons.Default.KeyboardArrowDown,
+                                    imageVector = AppIcons.KeyboardArrowDown,
                                     contentDescription = "Minimize",
                                     tint = Color.White
                                 )
@@ -267,14 +253,14 @@ fun YouTubeRootPlayer(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 IconButton(onClick = { playerStateHolder.toggleAudioOnly() }) {
                                     Icon(
-                                        imageVector = Icons.Default.Headphones,
+                                        imageVector = AppIcons.Headphones,
                                         contentDescription = "Audio Mode",
                                         tint = if (playerStateHolder.isAudioOnly.collectAsState().value) YouTubeRed else Color.White
                                     )
                                 }
                                 IconButton(onClick = { playerStateHolder.toggleFullScreen() }) {
                                     Icon(
-                                        imageVector = if (isFullScreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                                        imageVector = if (isFullScreen) AppIcons.FullscreenExit else AppIcons.Fullscreen,
                                         contentDescription = "Fullscreen",
                                         tint = Color.White
                                     )
@@ -293,7 +279,7 @@ fun YouTubeRootPlayer(
                                 modifier = Modifier.size(48.dp)
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.Replay10,
+                                    imageVector = AppIcons.Replay10,
                                     contentDescription = "Rewind 10s",
                                     tint = Color.White,
                                     modifier = Modifier.size(32.dp)
@@ -308,7 +294,7 @@ fun YouTubeRootPlayer(
                                     .background(Color.Black.copy(alpha = 0.6f))
                             ) {
                                 Icon(
-                                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    imageVector = if (isPlaying) AppIcons.Pause else AppIcons.Play,
                                     contentDescription = if (isPlaying) "Pause" else "Play",
                                     tint = Color.White,
                                     modifier = Modifier.size(38.dp)
@@ -320,7 +306,7 @@ fun YouTubeRootPlayer(
                                 modifier = Modifier.size(48.dp)
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.Forward10,
+                                    imageVector = AppIcons.Forward10,
                                     contentDescription = "Forward 10s",
                                     tint = Color.White,
                                     modifier = Modifier.size(32.dp)
@@ -499,7 +485,7 @@ fun YouTubeRootPlayer(
                             }
                         }
 
-                        // Action Buttons: Like, Dislike, Save to Watch Later
+                        // Action Buttons: Like, Save to Watch Later
                         item {
                             Row(
                                 modifier = Modifier
@@ -517,7 +503,7 @@ fun YouTubeRootPlayer(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Icon(
-                                            imageVector = if (isLiked) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp,
+                                            imageVector = if (isLiked) AppIcons.ThumbUp else AppIcons.ThumbUpOutlined,
                                             contentDescription = "Like",
                                             tint = if (isLiked) YouTubeRed else MaterialTheme.colorScheme.onSurfaceVariant,
                                             modifier = Modifier.size(18.dp)
@@ -541,7 +527,7 @@ fun YouTubeRootPlayer(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Icon(
-                                            imageVector = if (isInWatchLater) Icons.Filled.WatchLater else Icons.Filled.WatchLater,
+                                            imageVector = AppIcons.WatchLater,
                                             contentDescription = "Save",
                                             tint = if (isInWatchLater) YouTubeRed else MaterialTheme.colorScheme.onSurfaceVariant,
                                             modifier = Modifier.size(18.dp)
@@ -622,7 +608,7 @@ fun YouTubeRootPlayer(
 
                     IconButton(onClick = { playerStateHolder.playPause() }) {
                         Icon(
-                            imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            imageVector = if (isPlaying) AppIcons.Pause else AppIcons.Play,
                             contentDescription = if (isPlaying) "Pause" else "Play",
                             tint = MaterialTheme.colorScheme.onSurface
                         )
