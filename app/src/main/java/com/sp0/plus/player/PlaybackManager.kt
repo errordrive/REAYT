@@ -179,9 +179,6 @@ object PlaybackManager {
             try {
                 PlaybackService.instance?.player?.volume = clamped
             } catch (_: Throwable) {}
-            try {
-                mediaController?.volume = clamped
-            } catch (_: Throwable) {}
         }
         DualSpeakerManager.setVolume(clamped)
     }
@@ -418,22 +415,8 @@ object PlaybackManager {
             _isPlayerExpanded.value = true
 
             retryAttempts.set(0)
-            val shouldFadeIn = pendingFadeIn || SettingsManager.fadeEffectsEnabled.value || (SettingsManager.crossfadeEnabled.value && SettingsManager.crossfadeDurationMs.value > 0)
-            pendingFadeIn = shouldFadeIn
-
-            applyPlayerVolume(if (shouldFadeIn) 0f else 1f)
-            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                try {
-                    PlaybackService.instance?.player?.let { p ->
-                        p.stop()
-                        p.clearMediaItems()
-                    }
-                    mediaController?.let { c ->
-                        c.stop()
-                        c.clearMediaItems()
-                    }
-                } catch (_: Throwable) {}
-            }
+            pendingFadeIn = false
+            applyPlayerVolume(1f)
 
             if (newQueue != null && newQueue.isNotEmpty()) {
                 _queue.value = newQueue

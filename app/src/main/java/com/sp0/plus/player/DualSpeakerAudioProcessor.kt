@@ -16,6 +16,10 @@ class DualSpeakerAudioProcessor : BaseAudioProcessor() {
 
     private var leftBuffer: ByteBuffer = AudioProcessor.EMPTY_BUFFER
 
+    override fun isActive(): Boolean {
+        return DualSpeakerManager.isVirtualStereoEnabled && super.isActive()
+    }
+
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
         if (inputAudioFormat.encoding == C.ENCODING_PCM_16BIT && inputAudioFormat.channelCount == 2) {
             DualSpeakerManager.onAudioFormatChanged(inputAudioFormat.sampleRate)

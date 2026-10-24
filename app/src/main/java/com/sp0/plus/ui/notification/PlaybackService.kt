@@ -62,10 +62,10 @@ class PlaybackService : MediaSessionService() {
         const val CHANNEL_ID = "sp0_playback"
         const val NOTIFICATION_ID = 1001
 
+        const val ACTION_PREV    = "sp0.ACTION_PREV"
         const val ACTION_NEXT    = "sp0.ACTION_NEXT"
         const val ACTION_LIKE    = "sp0.ACTION_LIKE"
-        const val ACTION_SKIP_FW = "sp0.ACTION_SKIP_FW"
-        const val ACTION_SKIP_BW = "sp0.ACTION_SKIP_BW"
+        const val ACTION_REPEAT  = "sp0.ACTION_REPEAT"
 
         val PRESET_BANDS = mapOf(
             "Flat (Lossless)"  to shortArrayOf(0, 0, 0, 0, 0),
@@ -199,29 +199,14 @@ class PlaybackService : MediaSessionService() {
 
         val commandButtons = listOf(
             CommandButton.Builder()
-                .setDisplayName("Rewind 10s")
-                .setSessionCommand(SessionCommand(ACTION_SKIP_BW, android.os.Bundle.EMPTY))
-                .setIconResId(R.drawable.ic_player_back)
-                .build(),
-            CommandButton.Builder()
-                .setDisplayName("Previous")
-                .setPlayerCommand(Player.COMMAND_SEEK_TO_PREVIOUS)
-                .setIconResId(R.drawable.ic_player_back)
-                .build(),
-            CommandButton.Builder()
-                .setDisplayName("Next")
-                .setSessionCommand(SessionCommand(ACTION_NEXT, android.os.Bundle.EMPTY))
-                .setIconResId(R.drawable.ic_player_skip)
-                .build(),
-            CommandButton.Builder()
-                .setDisplayName("Forward 10s")
-                .setSessionCommand(SessionCommand(ACTION_SKIP_FW, android.os.Bundle.EMPTY))
-                .setIconResId(R.drawable.ic_player_skip)
-                .build(),
-            CommandButton.Builder()
                 .setDisplayName("Like")
                 .setSessionCommand(SessionCommand(ACTION_LIKE, android.os.Bundle.EMPTY))
-                .setIconResId(R.drawable.ic_sp0plus_notification)
+                .setIconResId(R.drawable.ic_add)
+                .build(),
+            CommandButton.Builder()
+                .setDisplayName("Repeat")
+                .setSessionCommand(SessionCommand(ACTION_REPEAT, android.os.Bundle.EMPTY))
+                .setIconResId(R.drawable.ic_repeat)
                 .build()
         )
         mediaSession?.setCustomLayout(commandButtons)
@@ -324,15 +309,40 @@ class PlaybackService : MediaSessionService() {
         ): MediaSession.ConnectionResult {
             val connectionResult = super.onConnect(session, controller)
             val availableSessionCommands = connectionResult.availableSessionCommands.buildUpon()
+                .add(SessionCommand(ACTION_PREV, android.os.Bundle.EMPTY))
                 .add(SessionCommand(ACTION_NEXT, android.os.Bundle.EMPTY))
                 .add(SessionCommand(ACTION_LIKE, android.os.Bundle.EMPTY))
-                .add(SessionCommand(ACTION_SKIP_FW, android.os.Bundle.EMPTY))
-                .add(SessionCommand(ACTION_SKIP_BW, android.os.Bundle.EMPTY))
+                .add(SessionCommand(ACTION_REPEAT, android.os.Bundle.EMPTY))
+                .build()
+            val availablePlayerCommands = connectionResult.availablePlayerCommands.buildUpon()
+                .add(Player.COMMAND_SEEK_TO_PREVIOUS)
+                .add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+                .add(Player.COMMAND_SEEK_TO_NEXT)
+                .add(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+                .add(Player.COMMAND_PLAY_PAUSE)
                 .build()
             return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
                 .setAvailableSessionCommands(availableSessionCommands)
-                .setAvailablePlayerCommands(connectionResult.availablePlayerCommands)
+                .setAvailablePlayerCommands(availablePlayerCommands)
                 .build()
+        }
+
+        override fun onPlayerCommandRequest(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            playerCommand: Int
+        ): Int {
+            when (playerCommand) {
+                Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM -> {
+                    com.sp0.plus.player.PlaybackManager.skipNext()
+                    return MediaSession.Callback.RESULT_SUCCESS
+                }
+                Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> {
+                    com.sp0.plus.player.PlaybackManager.skipPrevious()
+                    return MediaSession.Callback.RESULT_SUCCESS
+                }
+            }
+            return super.onPlayerCommandRequest(session, controller, playerCommand)
         }
 
         override fun onCustomCommand(
@@ -342,10 +352,10 @@ class PlaybackService : MediaSessionService() {
             args: android.os.Bundle
         ): ListenableFuture<SessionResult> {
             when (customCommand.customAction) {
+                ACTION_PREV -> com.sp0.plus.player.PlaybackManager.skipPrevious()
                 ACTION_NEXT -> com.sp0.plus.player.PlaybackManager.skipNext()
                 ACTION_LIKE -> com.sp0.plus.player.PlaybackManager.toggleLike()
-                ACTION_SKIP_FW -> com.sp0.plus.player.PlaybackManager.skipForward10()
-                ACTION_SKIP_BW -> com.sp0.plus.player.PlaybackManager.skipBackward10()
+                ACTION_REPEAT -> com.sp0.plus.player.PlaybackManager.toggleRepeat()
             }
             return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
         }
