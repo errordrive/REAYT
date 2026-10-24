@@ -24,29 +24,31 @@ object YouTubeClient {
     @Volatile
     private var cachedVisitorData: String = "CgtPVFZBTzFFckR3TSjZxfHWBjIKCgJCRBIEGgAgHQ%3D%3D"
 
-    private val WEB_CLIENT_CONTEXT = JSONObject().put(
-        "client",
-        JSONObject().apply {
-            put("clientName", "WEB")
-            put("clientVersion", "2.20241018.01.00")
-            put("hl", "en")
-            put("gl", "US")
-        }
-    )
+    private val WEB_CLIENT_CONTEXT: JSONObject
+        get() = JSONObject().put(
+            "client",
+            JSONObject().apply {
+                put("clientName", "WEB")
+                put("clientVersion", "2.20241018.01.00")
+                put("hl", "en")
+                put("gl", "US")
+            }
+        )
 
-    private val ANDROID_VR_CONTEXT = JSONObject().put(
-        "client",
-        JSONObject().apply {
-            put("clientName", "ANDROID_VR")
-            put("clientVersion", "1.60.19")
-            put("deviceMake", "Oculus")
-            put("deviceModel", "Quest 3")
-            put("osName", "Android")
-            put("osVersion", "12")
-            put("hl", "en")
-            put("gl", "US")
-        }
-    )
+    private val ANDROID_VR_CONTEXT: JSONObject
+        get() = JSONObject().put(
+            "client",
+            JSONObject().apply {
+                put("clientName", "ANDROID_VR")
+                put("clientVersion", "1.60.19")
+                put("deviceMake", "Oculus")
+                put("deviceModel", "Quest 3")
+                put("osName", "Android")
+                put("osVersion", "12")
+                put("hl", "en")
+                put("gl", "US")
+            }
+        )
 
     private val VISION_OS_CONTEXT: JSONObject
         get() = JSONObject().put(

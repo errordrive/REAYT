@@ -29,6 +29,7 @@ class PlayerRegressionTest {
         commandFlow.tryEmit(PlayerCommand.Expand)
         commandFlow.tryEmit(PlayerCommand.Minimise)
         commandFlow.tryEmit(PlayerCommand.Dismiss)
+        testScheduler.advanceUntilIdle()
 
         assertEquals(3, emitted.size)
         assertTrue(emitted[0] is PlayerCommand.Expand)
