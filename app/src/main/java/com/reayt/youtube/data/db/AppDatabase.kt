@@ -79,6 +79,9 @@ interface WatchHistoryDao {
     @Query("SELECT * FROM watch_history ORDER BY watchedAt DESC")
     fun getAllHistory(): Flow<List<WatchHistoryEntity>>
 
+    @Query("SELECT * FROM watch_history ORDER BY watchedAt DESC LIMIT :limit")
+    suspend fun getRecentHistorySync(limit: Int): List<WatchHistoryEntity>
+
     @Query("SELECT * FROM watch_history WHERE videoId = :videoId LIMIT 1")
     suspend fun getHistory(videoId: String): WatchHistoryEntity?
 
@@ -96,6 +99,9 @@ interface WatchHistoryDao {
 interface LikedVideoDao {
     @Query("SELECT * FROM liked_videos ORDER BY likedAt DESC")
     fun getLikedVideos(): Flow<List<LikedVideoEntity>>
+
+    @Query("SELECT * FROM liked_videos ORDER BY likedAt DESC LIMIT :limit")
+    suspend fun getRecentLikedSync(limit: Int): List<LikedVideoEntity>
 
     @Query("SELECT EXISTS(SELECT 1 FROM liked_videos WHERE videoId = :videoId)")
     fun isLiked(videoId: String): Flow<Boolean>
@@ -129,6 +135,9 @@ interface WatchLaterDao {
 interface SubscriptionDao {
     @Query("SELECT * FROM subscriptions ORDER BY subscribedAt DESC")
     fun getSubscriptions(): Flow<List<SubscriptionEntity>>
+
+    @Query("SELECT * FROM subscriptions ORDER BY subscribedAt DESC")
+    suspend fun getSubscriptionsSync(): List<SubscriptionEntity>
 
     @Query("SELECT EXISTS(SELECT 1 FROM subscriptions WHERE channelId = :channelId)")
     fun isSubscribed(channelId: String): Flow<Boolean>

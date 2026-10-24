@@ -37,6 +37,7 @@ import com.reayt.youtube.ui.theme.AppIcons
 import com.reayt.youtube.ui.theme.YouTubeRed
 import com.reayt.youtube.ui.viewmodel.SearchViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import org.koin.androidx.compose.koinViewModel
 
 @Composable
@@ -69,17 +70,16 @@ fun SearchScreen(
         }
     }
 
-    val shouldLoadMore by remember {
-        derivedStateOf {
+    // Continuous infinite prefetching: triggers 7 items before the end of search results
+    LaunchedEffect(listState) {
+        snapshotFlow {
             val totalItems = listState.layoutInfo.totalItemsCount
             val lastVisibleIndex = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            totalItems > 0 && lastVisibleIndex >= totalItems - 3
-        }
-    }
-
-    LaunchedEffect(shouldLoadMore) {
-        if (shouldLoadMore && hasSearchMore && !isSearchLoading && !isSearchPaginating) {
-            viewModel.loadMore()
+            totalItems > 0 && lastVisibleIndex >= totalItems - 7
+        }.distinctUntilChanged().collect { shouldLoad ->
+            if (shouldLoad && hasSearchMore && !isSearchLoading && !isSearchPaginating) {
+                viewModel.loadMore()
+            }
         }
     }
 

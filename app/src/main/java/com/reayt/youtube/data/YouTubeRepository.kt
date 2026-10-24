@@ -8,9 +8,12 @@ import com.reayt.youtube.data.db.WatchHistoryEntity
 import com.reayt.youtube.model.ResultState
 import com.reayt.youtube.model.YouTubePagedResult
 import com.reayt.youtube.model.YouTubeVideo
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -26,7 +29,15 @@ class YouTubeRepository(
 ) {
 
     private val tag = "YouTubeRepository"
-    private val repoScope = CoroutineScope(Dispatchers.IO)
+    private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        Log.e(tag, "Uncaught repo exception: ${throwable.message}", throwable)
+        if (throwable !is CancellationException) {
+            _feedError.value = throwable.localizedMessage ?: "Unexpected error"
+            _isFeedLoading.value = false
+            _isFeedPaginating.value = false
+        }
+    }
+    private val repoScope = CoroutineScope(Dispatchers.IO + SupervisorJob() + exceptionHandler)
 
     // Generation tracking to prevent stale pagination / search races
     private val feedGeneration = AtomicLong(0)
@@ -84,75 +95,125 @@ class YouTubeRepository(
 
     // ---------------------------------------------------------------- Feed Operations
 
+    private suspend fun refillFromSeeds(): List<YouTubeVideo> {
+        val seenIds = _feedVideos.value.map { it.id }.toSet()
+        val seeds = mutableListOf<String>()
+
+        try {
+            val history = database.watchHistoryDao().getRecentHistorySync(5)
+            seeds.addAll(history.map { it.title }.filter { it.isNotBlank() })
+        } catch (_: Exception) {}
+
+        try {
+            val subs = database.subscriptionDao().getSubscriptionsSync()
+            seeds.addAll(subs.map { it.channelTitle }.filter { it.isNotBlank() })
+        } catch (_: Exception) {}
+
+        if (seeds.isEmpty()) {
+            seeds.addAll(
+                listOf(
+                    "trending viral videos",
+                    "popular songs music",
+                    "technology documentary",
+                    "interesting science",
+                    "popular entertainment"
+                )
+            )
+        }
+
+        val chosenSeed = seeds.shuffled().firstOrNull() ?: "popular videos"
+        val searchRes = YouTubeClient.searchVideosPaged(chosenSeed)
+        if (searchRes is ResultState.Success) {
+            return searchRes.data.videos.filter { it.id !in seenIds }
+        }
+        return emptyList()
+    }
+
     fun loadFeed(category: String, refresh: Boolean = false) {
         val gen = feedGeneration.incrementAndGet()
         feedJob?.cancel()
 
         feedJob = repoScope.launch {
-            if (refresh || category != currentFeedCategory) {
-                currentFeedCategory = category
-                feedContinuationToken = null
-                _hasFeedMore.value = true
-                _feedError.value = null
-                _isFeedLoading.value = true
-                if (refresh) {
-                    _feedVideos.value = emptyList()
+            try {
+                if (refresh || category != currentFeedCategory) {
+                    currentFeedCategory = category
+                    feedContinuationToken = null
+                    _hasFeedMore.value = true
+                    _feedError.value = null
+                    _isFeedLoading.value = true
+                    if (refresh) {
+                        _feedVideos.value = emptyList()
+                    }
+                } else if (_isFeedPaginating.value || !_hasFeedMore.value) {
+                    return@launch
+                } else {
+                    _isFeedPaginating.value = true
                 }
-            } else if (_isFeedPaginating.value || !_hasFeedMore.value) {
-                return@launch
-            } else {
-                _isFeedPaginating.value = true
-            }
 
-            val result = YouTubeClient.fetchFeedPaged(category, feedContinuationToken)
-
-            if (gen != feedGeneration.get()) {
-                // Discard stale generation results
-                return@launch
-            }
-
-            feedMutex.withLock {
-                when (result) {
-                    is ResultState.Success -> {
-                        val paged = result.data
-                        feedContinuationToken = paged.continuationToken
-                        _hasFeedMore.value = !feedContinuationToken.isNullOrBlank()
-
-                        val currentList = _feedVideos.value
-                        val existingIds = currentList.map { it.id }.toSet()
-                        val newUnique = paged.videos.filter { it.id !in existingIds }
-
-                        val updated = if (feedContinuationToken == null && currentList.isEmpty()) {
-                            paged.videos
-                        } else {
-                            currentList + newUnique
-                        }
-                        _feedVideos.value = updated
-                        _feedError.value = null
-
-                        // Cache feed for fast cold start
-                        if (category.equals("All", ignoreCase = true)) {
-                            saveFeedCacheToDisk(updated.take(30))
-                        }
-                    }
-                    is ResultState.NetworkError -> {
-                        _feedError.value = result.message
-                    }
-                    is ResultState.ParseError -> {
-                        _feedError.value = result.message
-                    }
-                    is ResultState.Blocked -> {
-                        _feedError.value = result.message
-                    }
+                val result = if (!refresh && category == currentFeedCategory && feedContinuationToken.isNullOrBlank()) {
+                    val refilled = refillFromSeeds()
+                    ResultState.Success(YouTubePagedResult(refilled, null))
+                } else {
+                    YouTubeClient.fetchFeedPaged(category, feedContinuationToken)
                 }
+
+                if (gen != feedGeneration.get()) {
+                    // Discard stale generation results
+                    return@launch
+                }
+
+                feedMutex.withLock {
+                    when (result) {
+                        is ResultState.Success -> {
+                            val paged = result.data
+                            feedContinuationToken = paged.continuationToken
+                            _hasFeedMore.value = true // Keep infinite scrolling active
+
+                            val currentList = _feedVideos.value
+                            val existingIds = currentList.map { it.id }.toSet()
+                            val newUnique = paged.videos.filter { it.id !in existingIds }
+
+                            val updated = if (feedContinuationToken == null && currentList.isEmpty()) {
+                                paged.videos
+                            } else {
+                                currentList + newUnique
+                            }
+                            _feedVideos.value = updated
+                            _feedError.value = null
+
+                            // Cache feed for fast cold start
+                            if (category.equals("All", ignoreCase = true) && updated.isNotEmpty()) {
+                                saveFeedCacheToDisk(updated.take(30))
+                            }
+                        }
+                        is ResultState.NetworkError -> {
+                            if (_feedVideos.value.isEmpty()) {
+                                _feedError.value = result.message
+                            }
+                        }
+                        is ResultState.ParseError -> {
+                            if (_feedVideos.value.isEmpty()) {
+                                _feedError.value = result.message
+                            }
+                        }
+                        is ResultState.Blocked -> {
+                            _feedError.value = result.message
+                        }
+                    }
+                    _isFeedLoading.value = false
+                    _isFeedPaginating.value = false
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _isFeedLoading.value = false
                 _isFeedPaginating.value = false
+                _feedError.value = e.localizedMessage ?: "Feed error"
             }
         }
     }
 
     fun loadMoreFeed() {
-        if (!_isFeedLoading.value && !_isFeedPaginating.value && _hasFeedMore.value && !feedContinuationToken.isNullOrBlank()) {
+        if (!_isFeedLoading.value && !_isFeedPaginating.value && _hasFeedMore.value) {
             loadFeed(currentFeedCategory, refresh = false)
         }
     }
@@ -172,55 +233,66 @@ class YouTubeRepository(
         searchJob?.cancel()
 
         searchJob = repoScope.launch {
-            if (refresh || q != currentSearchQuery) {
-                currentSearchQuery = q
-                searchContinuationToken = null
-                _hasSearchMore.value = true
-                _searchError.value = null
-                _isSearchLoading.value = true
-                _searchVideos.value = emptyList()
-            } else if (_isSearchPaginating.value || !_hasSearchMore.value) {
-                return@launch
-            } else {
-                _isSearchPaginating.value = true
-            }
-
-            val result = YouTubeClient.searchVideosPaged(q, searchContinuationToken)
-
-            if (gen != searchGeneration.get()) {
-                return@launch
-            }
-
-            searchMutex.withLock {
-                when (result) {
-                    is ResultState.Success -> {
-                        val paged = result.data
-                        searchContinuationToken = paged.continuationToken
-                        _hasSearchMore.value = !searchContinuationToken.isNullOrBlank()
-
-                        val currentList = _searchVideos.value
-                        val existingIds = currentList.map { it.id }.toSet()
-                        val newUnique = paged.videos.filter { it.id !in existingIds }
-
-                        _searchVideos.value = if (searchContinuationToken == null && currentList.isEmpty()) {
-                            paged.videos
-                        } else {
-                            currentList + newUnique
-                        }
-                        _searchError.value = null
-                    }
-                    is ResultState.NetworkError -> {
-                        _searchError.value = result.message
-                    }
-                    is ResultState.ParseError -> {
-                        _searchError.value = result.message
-                    }
-                    is ResultState.Blocked -> {
-                        _searchError.value = result.message
-                    }
+            try {
+                if (refresh || q != currentSearchQuery) {
+                    currentSearchQuery = q
+                    searchContinuationToken = null
+                    _hasSearchMore.value = true
+                    _searchError.value = null
+                    _isSearchLoading.value = true
+                    _searchVideos.value = emptyList()
+                } else if (_isSearchPaginating.value || !_hasSearchMore.value) {
+                    return@launch
+                } else {
+                    _isSearchPaginating.value = true
                 }
+
+                val result = YouTubeClient.searchVideosPaged(q, searchContinuationToken)
+
+                if (gen != searchGeneration.get()) {
+                    return@launch
+                }
+
+                searchMutex.withLock {
+                    when (result) {
+                        is ResultState.Success -> {
+                            val paged = result.data
+                            searchContinuationToken = paged.continuationToken
+                            _hasSearchMore.value = !searchContinuationToken.isNullOrBlank()
+
+                            val currentList = _searchVideos.value
+                            val existingIds = currentList.map { it.id }.toSet()
+                            val newUnique = paged.videos.filter { it.id !in existingIds }
+
+                            _searchVideos.value = if (searchContinuationToken == null && currentList.isEmpty()) {
+                                paged.videos
+                            } else {
+                                currentList + newUnique
+                            }
+                            _searchError.value = null
+                        }
+                        is ResultState.NetworkError -> {
+                            if (_searchVideos.value.isEmpty()) {
+                                _searchError.value = result.message
+                            }
+                        }
+                        is ResultState.ParseError -> {
+                            if (_searchVideos.value.isEmpty()) {
+                                _searchError.value = "Couldn't load results"
+                            }
+                        }
+                        is ResultState.Blocked -> {
+                            _searchError.value = result.message
+                        }
+                    }
+                    _isSearchLoading.value = false
+                    _isSearchPaginating.value = false
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _isSearchLoading.value = false
                 _isSearchPaginating.value = false
+                _searchError.value = e.localizedMessage ?: "Search error"
             }
         }
     }

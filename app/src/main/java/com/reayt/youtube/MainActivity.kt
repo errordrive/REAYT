@@ -26,6 +26,7 @@ import com.reayt.youtube.ui.components.YouTubeNavTab
 import com.reayt.youtube.ui.components.YouTubeRootPlayer
 import com.reayt.youtube.ui.screens.HomeScreen
 import com.reayt.youtube.ui.screens.SearchScreen
+import com.reayt.youtube.ui.screens.SettingsScreen
 import com.reayt.youtube.ui.screens.SubscriptionsScreen
 import com.reayt.youtube.ui.screens.YouScreen
 import com.reayt.youtube.ui.theme.YouTubeTheme
@@ -160,6 +161,23 @@ fun MainAppShell(
                     isSearchOpen = false
                     playerStateHolder.playVideo(video)
                 },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        detectTapGestures {}
+                    }
+            )
+        }
+
+        // Full Screen Settings Overlay
+        AnimatedVisibility(
+            visible = isSettingsOpen && !isInPiP,
+            enter = slideInHorizontally(initialOffsetX = { it }),
+            exit = slideOutHorizontally(targetOffsetX = { it })
+        ) {
+            SettingsScreen(
+                onBack = { isSettingsOpen = false },
+                playerStateHolder = playerStateHolder,
                 modifier = Modifier
                     .fillMaxSize()
                     .pointerInput(Unit) {

@@ -22,7 +22,6 @@ data class YouTubeVideo(
     val subscriberCount: String = "",
     val likesCount: String = "",
     val commentsCount: String = "",
-    val isShort: Boolean = false,
     val isLive: Boolean = false,
     val isLiked: Boolean = false,
     val isDisliked: Boolean = false,

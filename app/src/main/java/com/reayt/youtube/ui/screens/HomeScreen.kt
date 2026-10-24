@@ -28,6 +28,7 @@ import com.reayt.youtube.ui.components.YouTubeTopBar
 import com.reayt.youtube.ui.components.YouTubeVideoCard
 import com.reayt.youtube.ui.theme.YouTubeRed
 import com.reayt.youtube.ui.viewmodel.HomeViewModel
+import kotlinx.coroutines.flow.distinctUntilChanged
 import org.koin.androidx.compose.koinViewModel
 
 val DEFAULT_CATEGORIES = listOf(
@@ -51,18 +52,16 @@ fun HomeScreen(
 
     val listState = rememberLazyListState()
 
-    // Automatic incremental pagination trigger as user approaches end of list
-    val shouldLoadMore by remember {
-        derivedStateOf {
+    // Continuous infinite prefetching: triggers 7 items before the end of feed
+    LaunchedEffect(listState) {
+        snapshotFlow {
             val totalItems = listState.layoutInfo.totalItemsCount
             val lastVisibleIndex = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            totalItems > 0 && lastVisibleIndex >= totalItems - 3
-        }
-    }
-
-    LaunchedEffect(shouldLoadMore) {
-        if (shouldLoadMore && hasFeedMore && !isFeedLoading && !isFeedPaginating) {
-            viewModel.loadMore()
+            totalItems > 0 && lastVisibleIndex >= totalItems - 7
+        }.distinctUntilChanged().collect { shouldLoad ->
+            if (shouldLoad && hasFeedMore && !isFeedLoading && !isFeedPaginating) {
+                viewModel.loadMore()
+            }
         }
     }
 

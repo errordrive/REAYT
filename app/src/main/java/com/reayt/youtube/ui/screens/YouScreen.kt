@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,10 +24,12 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.reayt.youtube.model.YouTubeVideo
 import com.reayt.youtube.ui.components.YouTubeTopBar
+import com.reayt.youtube.ui.components.YouTubeVideoCard
 import com.reayt.youtube.ui.theme.AppIcons
 import com.reayt.youtube.ui.viewmodel.YouViewModel
 import org.koin.androidx.compose.koinViewModel
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun YouScreen(
     onSearchClick: () -> Unit = {},
@@ -38,6 +41,9 @@ fun YouScreen(
     val historyVideos by viewModel.historyVideos.collectAsState()
     val likedVideos by viewModel.likedVideos.collectAsState()
     val watchLaterVideos by viewModel.watchLaterVideos.collectAsState()
+
+    var activeSheetTitle by remember { mutableStateOf<String?>(null) }
+    var activeSheetVideos by remember { mutableStateOf<List<YouTubeVideo>>(emptyList()) }
 
     Column(
         modifier = modifier
@@ -175,7 +181,10 @@ fun YouScreen(
                     leadingContent = {
                         Icon(AppIcons.ThumbUp, contentDescription = null)
                     },
-                    modifier = Modifier.clickable {}
+                    modifier = Modifier.clickable {
+                        activeSheetTitle = "Liked videos"
+                        activeSheetVideos = likedVideos
+                    }
                 )
                 ListItem(
                     headlineContent = { Text("Watch Later") },
@@ -183,7 +192,10 @@ fun YouScreen(
                     leadingContent = {
                         Icon(AppIcons.WatchLater, contentDescription = null)
                     },
-                    modifier = Modifier.clickable {}
+                    modifier = Modifier.clickable {
+                        activeSheetTitle = "Watch Later"
+                        activeSheetVideos = watchLaterVideos
+                    }
                 )
                 ListItem(
                     headlineContent = { Text("Downloads") },
@@ -191,8 +203,64 @@ fun YouScreen(
                     leadingContent = {
                         Icon(AppIcons.Download, contentDescription = null)
                     },
-                    modifier = Modifier.clickable {}
+                    modifier = Modifier.clickable {
+                        activeSheetTitle = "Downloads"
+                        activeSheetVideos = emptyList()
+                    }
                 )
+            }
+        }
+    }
+
+    // Modal Bottom Sheet displaying selected playlist / collection
+    activeSheetTitle?.let { title ->
+        ModalBottomSheet(
+            onDismissRequest = { activeSheetTitle = null },
+            sheetState = rememberModalBottomSheetState()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Text(
+                    text = title,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+
+                if (activeSheetVideos.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(140.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "No videos in $title",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 14.sp
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 450.dp)
+                    ) {
+                        items(activeSheetVideos, key = { it.id }) { vid ->
+                            YouTubeVideoCard(
+                                video = vid,
+                                onClick = {
+                                    activeSheetTitle = null
+                                    onVideoClick(vid)
+                                }
+                            )
+                        }
+                    }
+                }
             }
         }
     }

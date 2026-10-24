@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -36,6 +37,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import com.reayt.youtube.player.PlayerCommand
 import com.reayt.youtube.player.PlayerStateHolder
 import com.reayt.youtube.ui.theme.AppIcons
 import com.reayt.youtube.ui.theme.YouTubeRed
@@ -60,6 +62,8 @@ fun YouTubeRootPlayer(
     val isFullScreen by playerStateHolder.isFullScreen.collectAsState()
     val relatedVideos by playerStateHolder.relatedVideos.collectAsState()
     val mediaController by playerStateHolder.mediaController.collectAsState()
+    val availableQualities by playerStateHolder.availableQualities.collectAsState()
+    val selectedQuality by playerStateHolder.selectedQuality.collectAsState()
     val isLiked by watchViewModel.isLiked.collectAsState()
     val isInWatchLater by watchViewModel.isInWatchLater.collectAsState()
     val isSubscribed by watchViewModel.isSubscribed.collectAsState()
@@ -85,18 +89,34 @@ fun YouTubeRootPlayer(
     var showControls by remember { mutableStateOf(false) }
     var isSeeking by remember { mutableStateOf(false) }
     var scrubPositionMs by remember { mutableLongStateOf(0L) }
+    var showQualityMenu by remember { mutableStateOf(false) }
 
-    // Intercept back button: fullscreen -> exit fullscreen; expanded -> minimise; mini -> normal back
-    BackHandler(enabled = currentVideo != null) {
+    // Collect PlayerCommand events inside Composition where MonotonicFrameClock is guaranteed
+    LaunchedEffect(playerStateHolder) {
+        playerStateHolder.playerCommands.collect { cmd ->
+            when (cmd) {
+                is PlayerCommand.Expand -> {
+                    playerStateHolder.miniPlayerProgress.animateTo(0f, spring(stiffness = 400f))
+                }
+                is PlayerCommand.Minimise -> {
+                    playerStateHolder.miniPlayerProgress.animateTo(1f, spring(dampingRatio = 0.85f, stiffness = 300f))
+                }
+                is PlayerCommand.Dismiss -> {
+                    playerStateHolder.miniPlayerProgress.snapTo(1f)
+                }
+            }
+        }
+    }
+
+    // Intercept back button:
+    // Fullscreen -> exit fullscreen; expanded -> minimise; mini -> disabled (let navigation tabs handle back)
+    BackHandler(enabled = currentVideo != null && (isFullScreen || !isMini)) {
         when {
             isFullScreen -> playerStateHolder.setFullScreen(false)
             !isMini -> {
                 coroutineScope.launch {
                     playerStateHolder.miniPlayerProgress.animateTo(1f, tween(250, easing = FastOutSlowInEasing))
                 }
-            }
-            else -> {
-                playerStateHolder.dismissPlayer()
             }
         }
     }
@@ -113,13 +133,13 @@ fun YouTubeRootPlayer(
     val velocityTracker = remember { VelocityTracker() }
     var horizontalMiniSwipeOffset by remember { mutableFloatStateOf(0f) }
 
+    val playerOffsetPx = if (!isFullScreen) progress * maxDragDistancePx else 0f
+    val currentVideoWidthPx = if (isFullScreen) screenWidthPx else screenWidthPx - progress * (screenWidthPx - miniThumbWidthPx)
+    val currentVideoHeightPx = if (isFullScreen) screenHeightPx else expandedVideoHeightPx - progress * (expandedVideoHeightPx - miniBarHeightPx)
+
     Box(
         modifier = modifier
             .fillMaxSize()
-            .graphicsLayer {
-                translationY = if (!isFullScreen) progress * maxDragDistancePx else 0f
-                translationX = horizontalMiniSwipeOffset
-            }
             .pointerInput(isFullScreen, isMini) {
                 if (isFullScreen) return@pointerInput
 
@@ -127,9 +147,10 @@ fun YouTubeRootPlayer(
                     onDragStart = { velocityTracker.resetTracking() },
                     onDragEnd = {
                         val velocityY = velocityTracker.calculateVelocity().y
+                        val velocityX = velocityTracker.calculateVelocity().x
                         coroutineScope.launch {
                             if (isMini) {
-                                if (kotlin.math.abs(horizontalMiniSwipeOffset) > screenWidthPx * 0.35f) {
+                                if (kotlin.math.abs(horizontalMiniSwipeOffset) > screenWidthPx * 0.35f || kotlin.math.abs(velocityX) > 1000f) {
                                     playerStateHolder.dismissPlayer()
                                 } else {
                                     horizontalMiniSwipeOffset = 0f
@@ -153,7 +174,7 @@ fun YouTubeRootPlayer(
                         change.consume()
                         velocityTracker.addPosition(change.uptimeMillis, change.position)
                         if (isMini) {
-                            if (dragAmount.y < -10f) {
+                            if (dragAmount.y < -8f) {
                                 coroutineScope.launch {
                                     playerStateHolder.miniPlayerProgress.animateTo(0f, spring(stiffness = 400f))
                                 }
@@ -170,456 +191,488 @@ fun YouTubeRootPlayer(
                 )
             }
     ) {
-        // Full Watch Screen Layout
-        Column(
+        // Translating Player Container
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background)
+                .graphicsLayer {
+                    translationY = playerOffsetPx
+                    translationX = if (isMini) horizontalMiniSwipeOffset else 0f
+                }
         ) {
-            // Video Surface + Controls Box
-            Box(
+            // Full Watch Screen Layout
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(
-                        if (isFullScreen) {
-                            with(density) { screenHeightPx.toDp() }
-                        } else {
-                            with(density) {
-                                (expandedVideoHeightPx - progress * (expandedVideoHeightPx - miniBarHeightPx)).toDp()
-                            }
-                        }
-                    )
-                    .background(Color.Black)
-                    .clickable {
-                        if (isMini) {
-                            coroutineScope.launch {
-                                playerStateHolder.miniPlayerProgress.animateTo(0f, spring(stiffness = 400f))
-                            }
-                        } else {
-                            showControls = !showControls
-                        }
-                    }
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
             ) {
-                // Media3 AndroidView Video Surface (Hosted once at root)
-                AndroidView(
-                    factory = { ctx ->
-                        PlayerView(ctx).apply {
-                            useController = false
-                            layoutParams = FrameLayout.LayoutParams(
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                                ViewGroup.LayoutParams.MATCH_PARENT
-                            )
-                            this.player = mediaController
-                        }
-                    },
-                    update = { playerView ->
-                        if (playerView.player != mediaController) {
-                            playerView.player = mediaController
-                        }
-                    },
-                    onRelease = { playerView ->
-                        playerView.player = null
-                    },
-                    modifier = Modifier.fillMaxSize()
-                )
-
-                // Expanded Controls Overlay
-                if (!isMini && showControls) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.5f))
-                    ) {
-                        // Top bar inside player: minimize, quality, fullscreen
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 8.dp, vertical = 6.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            IconButton(onClick = {
+                // Video Surface + Controls Box
+                Box(
+                    modifier = Modifier
+                        .width(with(density) { currentVideoWidthPx.toDp() })
+                        .height(with(density) { currentVideoHeightPx.toDp() })
+                        .background(Color.Black)
+                        .clickable {
+                            if (isMini) {
                                 coroutineScope.launch {
-                                    playerStateHolder.miniPlayerProgress.animateTo(1f, tween(250))
+                                    playerStateHolder.miniPlayerProgress.animateTo(0f, spring(stiffness = 400f))
                                 }
-                            }) {
-                                Icon(
-                                    imageVector = AppIcons.KeyboardArrowDown,
-                                    contentDescription = "Minimize",
-                                    tint = Color.White
-                                )
+                            } else {
+                                showControls = !showControls
                             }
+                        }
+                ) {
+                    // Media3 AndroidView Video Surface (Hosted once at root)
+                    AndroidView(
+                        factory = { ctx ->
+                            PlayerView(ctx).apply {
+                                useController = false
+                                layoutParams = FrameLayout.LayoutParams(
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    ViewGroup.LayoutParams.MATCH_PARENT
+                                )
+                                this.player = mediaController
+                            }
+                        },
+                        update = { playerView ->
+                            if (playerView.player != mediaController) {
+                                playerView.player = mediaController
+                            }
+                        },
+                        onRelease = { playerView ->
+                            playerView.player = null
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
 
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                IconButton(onClick = { playerStateHolder.toggleAudioOnly() }) {
+                    // Expanded Controls Overlay
+                    if (!isMini && showControls) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = 0.5f))
+                        ) {
+                            // Top bar inside player: minimize, quality, audio mode, fullscreen
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                IconButton(onClick = {
+                                    coroutineScope.launch {
+                                        playerStateHolder.miniPlayerProgress.animateTo(1f, tween(250))
+                                    }
+                                }) {
                                     Icon(
-                                        imageVector = AppIcons.Headphones,
-                                        contentDescription = "Audio Mode",
-                                        tint = if (playerStateHolder.isAudioOnly.collectAsState().value) YouTubeRed else Color.White
-                                    )
-                                }
-                                IconButton(onClick = { playerStateHolder.toggleFullScreen() }) {
-                                    Icon(
-                                        imageVector = if (isFullScreen) AppIcons.FullscreenExit else AppIcons.Fullscreen,
-                                        contentDescription = "Fullscreen",
+                                        imageVector = AppIcons.KeyboardArrowDown,
+                                        contentDescription = "Minimize",
                                         tint = Color.White
                                     )
                                 }
-                            }
-                        }
 
-                        // Center Controls: Rewind 10s, Play/Pause, Forward 10s
-                        Row(
-                            modifier = Modifier.align(Alignment.Center),
-                            horizontalArrangement = Arrangement.spacedBy(28.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            IconButton(
-                                onClick = { playerStateHolder.seekRelative(-10000L) },
-                                modifier = Modifier.size(48.dp)
-                            ) {
-                                Icon(
-                                    imageVector = AppIcons.Replay10,
-                                    contentDescription = "Rewind 10s",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(32.dp)
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box {
+                                        IconButton(onClick = { showQualityMenu = true }) {
+                                            Icon(
+                                                imageVector = Icons.Default.Settings,
+                                                contentDescription = "Quality",
+                                                tint = Color.White
+                                            )
+                                        }
+                                        DropdownMenu(
+                                            expanded = showQualityMenu,
+                                            onDismissRequest = { showQualityMenu = false }
+                                        ) {
+                                            availableQualities.forEach { q ->
+                                                DropdownMenuItem(
+                                                    text = {
+                                                        Text(
+                                                            text = if (q == selectedQuality) "✓ $q" else q,
+                                                            fontWeight = if (q == selectedQuality) FontWeight.Bold else FontWeight.Normal
+                                                        )
+                                                    },
+                                                    onClick = {
+                                                        playerStateHolder.setQuality(q)
+                                                        showQualityMenu = false
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    IconButton(onClick = { playerStateHolder.toggleAudioOnly() }) {
+                                        Icon(
+                                            imageVector = AppIcons.Headphones,
+                                            contentDescription = "Audio Mode",
+                                            tint = if (playerStateHolder.isAudioOnly.collectAsState().value) YouTubeRed else Color.White
+                                        )
+                                    }
+
+                                    IconButton(onClick = { playerStateHolder.toggleFullScreen() }) {
+                                        Icon(
+                                            imageVector = if (isFullScreen) AppIcons.FullscreenExit else AppIcons.Fullscreen,
+                                            contentDescription = "Fullscreen",
+                                            tint = Color.White
+                                        )
+                                    }
+                                }
                             }
 
-                            IconButton(
-                                onClick = { playerStateHolder.playPause() },
-                                modifier = Modifier
-                                    .size(60.dp)
-                                    .clip(CircleShape)
-                                    .background(Color.Black.copy(alpha = 0.6f))
-                            ) {
-                                Icon(
-                                    imageVector = if (isPlaying) AppIcons.Pause else AppIcons.Play,
-                                    contentDescription = if (isPlaying) "Pause" else "Play",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(38.dp)
-                                )
-                            }
-
-                            IconButton(
-                                onClick = { playerStateHolder.seekRelative(10000L) },
-                                modifier = Modifier.size(48.dp)
-                            ) {
-                                Icon(
-                                    imageVector = AppIcons.Forward10,
-                                    contentDescription = "Forward 10s",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(32.dp)
-                                )
-                            }
-                        }
-
-                        // Bottom Seekbar & Position Text
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .align(Alignment.BottomCenter)
-                                .padding(horizontal = 12.dp, vertical = 6.dp)
-                        ) {
+                            // Center Controls: Rewind 10s, Play/Pause, Forward 10s
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                val currentSec = (if (isSeeking) scrubPositionMs else positionMs) / 1000
-                                val totalSec = durationMs / 1000
-                                Text(
-                                    text = String.format("%02d:%02d / %02d:%02d", currentSec / 60, currentSec % 60, totalSec / 60, totalSec % 60),
-                                    color = Color.White,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
-                            }
-
-                            Slider(
-                                value = if (durationMs > 0) (if (isSeeking) scrubPositionMs else positionMs).toFloat() / durationMs else 0f,
-                                onValueChange = { fraction ->
-                                    isSeeking = true
-                                    scrubPositionMs = (fraction * durationMs).toLong()
-                                },
-                                onValueChangeFinished = {
-                                    isSeeking = false
-                                    playerStateHolder.seekTo(scrubPositionMs)
-                                },
-                                colors = SliderDefaults.colors(
-                                    thumbColor = YouTubeRed,
-                                    activeTrackColor = YouTubeRed,
-                                    inactiveTrackColor = Color.White.copy(alpha = 0.3f)
-                                ),
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-                    }
-                }
-
-                // Buffering Spinner
-                if ((isBuffering || isLoadingStream) && streamError == null) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = YouTubeRed, strokeWidth = 3.dp)
-                    }
-                }
-
-                // Stream Error Overlay with Retry
-                streamError?.let { err ->
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.85f))
-                            .padding(16.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(text = err, color = Color.White, fontSize = 13.sp)
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Button(
-                                onClick = { playerStateHolder.retryPlayback() },
-                                colors = ButtonDefaults.buttonColors(containerColor = YouTubeRed)
-                            ) {
-                                Text("Retry Playback", color = Color.White)
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Watch Page Content below video (fades out as user minimises)
-            if (!isFullScreen) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .alpha((1f - progress).coerceIn(0f, 1f))
-                ) {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        // Title & Metadata
-                        item {
-                            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                                Text(
-                                    text = video.title,
-                                    color = MaterialTheme.colorScheme.onBackground,
-                                    fontSize = 17.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    lineHeight = 22.sp
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "${video.viewCountText} • ${video.publishedTimeText}",
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 12.sp
-                                )
-                            }
-                        }
-
-                        // Channel Row + Subscribe Button
-                        item {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                                modifier = Modifier.align(Alignment.Center),
+                                horizontalArrangement = Arrangement.spacedBy(28.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                if (video.channelAvatarUrl.isNotBlank()) {
-                                    AsyncImage(
-                                        model = video.channelAvatarUrl,
-                                        contentDescription = null,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier
-                                            .size(38.dp)
-                                            .clip(CircleShape)
-                                    )
-                                } else {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(38.dp)
-                                            .clip(CircleShape)
-                                            .background(MaterialTheme.colorScheme.surfaceVariant),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            text = video.channelTitle.firstOrNull()?.uppercase() ?: "C",
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.width(12.dp))
-
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = video.channelTitle,
-                                        color = MaterialTheme.colorScheme.onBackground,
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    if (video.subscriberCount.isNotBlank()) {
-                                        Text(
-                                            text = video.subscriberCount,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            fontSize = 11.sp
-                                        )
-                                    }
-                                }
-
-                                Button(
-                                    onClick = { watchViewModel.toggleSubscription() },
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = if (isSubscribed) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.onBackground
-                                    ),
-                                    shape = RoundedCornerShape(18.dp),
-                                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                                IconButton(
+                                    onClick = { playerStateHolder.seekRelative(-10000L) },
+                                    modifier = Modifier.size(48.dp)
                                 ) {
+                                    Icon(
+                                        imageVector = AppIcons.Replay10,
+                                        contentDescription = "Rewind 10s",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(32.dp)
+                                    )
+                                }
+
+                                IconButton(
+                                    onClick = { playerStateHolder.playPause() },
+                                    modifier = Modifier
+                                        .size(60.dp)
+                                        .clip(CircleShape)
+                                        .background(Color.Black.copy(alpha = 0.6f))
+                                ) {
+                                    Icon(
+                                        imageVector = if (isPlaying) AppIcons.Pause else AppIcons.Play,
+                                        contentDescription = if (isPlaying) "Pause" else "Play",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(38.dp)
+                                    )
+                                }
+
+                                IconButton(
+                                    onClick = { playerStateHolder.seekRelative(10000L) },
+                                    modifier = Modifier.size(48.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = AppIcons.Forward10,
+                                        contentDescription = "Forward 10s",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(32.dp)
+                                    )
+                                }
+                            }
+
+                            // Bottom Seekbar & Position Text
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .align(Alignment.BottomCenter)
+                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    val currentSec = (if (isSeeking) scrubPositionMs else positionMs) / 1000
+                                    val totalSec = durationMs / 1000
                                     Text(
-                                        text = if (isSubscribed) "Subscribed" else "Subscribe",
-                                        color = if (isSubscribed) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.background,
-                                        fontSize = 13.sp,
+                                        text = String.format("%02d:%02d / %02d:%02d", currentSec / 60, currentSec % 60, totalSec / 60, totalSec % 60),
+                                        color = Color.White,
+                                        fontSize = 12.sp,
                                         fontWeight = FontWeight.Medium
                                     )
                                 }
+
+                                Slider(
+                                    value = if (durationMs > 0) (if (isSeeking) scrubPositionMs else positionMs).toFloat() / durationMs else 0f,
+                                    onValueChange = { fraction ->
+                                        isSeeking = true
+                                        scrubPositionMs = (fraction * durationMs).toLong()
+                                    },
+                                    onValueChangeFinished = {
+                                        isSeeking = false
+                                        playerStateHolder.seekTo(scrubPositionMs)
+                                    },
+                                    colors = SliderDefaults.colors(
+                                        thumbColor = YouTubeRed,
+                                        activeTrackColor = YouTubeRed,
+                                        inactiveTrackColor = Color.White.copy(alpha = 0.3f)
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
                             }
                         }
+                    }
 
-                        // Action Buttons: Like, Save to Watch Later
-                        item {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 14.dp, vertical = 8.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Surface(
-                                    shape = RoundedCornerShape(18.dp),
-                                    color = MaterialTheme.colorScheme.surfaceVariant,
-                                    modifier = Modifier.clickable { watchViewModel.toggleLike() }
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Icon(
-                                            imageVector = if (isLiked) AppIcons.ThumbUp else AppIcons.ThumbUpOutlined,
-                                            contentDescription = "Like",
-                                            tint = if (isLiked) YouTubeRed else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = if (isLiked) "Liked" else "Like",
-                                            fontSize = 13.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
+                    // Buffering Spinner
+                    if ((isBuffering || isLoadingStream) && streamError == null) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(color = YouTubeRed, strokeWidth = 3.dp)
+                        }
+                    }
 
-                                Surface(
-                                    shape = RoundedCornerShape(18.dp),
-                                    color = MaterialTheme.colorScheme.surfaceVariant,
-                                    modifier = Modifier.clickable { watchViewModel.toggleWatchLater() }
+                    // Stream Error Overlay with Retry
+                    streamError?.let { err ->
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = 0.85f))
+                                .padding(16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(text = err, color = Color.White, fontSize = 13.sp)
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Button(
+                                    onClick = { playerStateHolder.retryPlayback() },
+                                    colors = ButtonDefaults.buttonColors(containerColor = YouTubeRed)
                                 ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Icon(
-                                            imageVector = AppIcons.WatchLater,
-                                            contentDescription = "Save",
-                                            tint = if (isInWatchLater) YouTubeRed else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = if (isInWatchLater) "Saved" else "Save",
-                                            fontSize = 13.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
+                                    Text("Retry Playback", color = Color.White)
                                 }
                             }
                         }
+                    }
+                }
 
-                        // Related Videos Section
-                        items(relatedVideos, key = { it.id }) { rel ->
-                            YouTubeVideoCard(
-                                video = rel,
-                                onClick = { playerStateHolder.playVideo(rel) }
-                            )
+                // Watch Page Content below video (fades out as user minimises)
+                if (!isFullScreen) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .alpha((1f - progress).coerceIn(0f, 1f))
+                    ) {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            // Title & Metadata
+                            item {
+                                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                                    Text(
+                                        text = video.title,
+                                        color = MaterialTheme.colorScheme.onBackground,
+                                        fontSize = 17.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        lineHeight = 22.sp
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "${video.viewCountText} • ${video.publishedTimeText}",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontSize = 12.sp
+                                    )
+                                }
+                            }
+
+                            // Channel Row + Subscribe Button
+                            item {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (video.channelAvatarUrl.isNotBlank()) {
+                                        AsyncImage(
+                                            model = video.channelAvatarUrl,
+                                            contentDescription = null,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier
+                                                .size(38.dp)
+                                                .clip(CircleShape)
+                                        )
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(38.dp)
+                                                .clip(CircleShape)
+                                                .background(MaterialTheme.colorScheme.surfaceVariant),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = video.channelTitle.firstOrNull()?.uppercase() ?: "C",
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.width(12.dp))
+
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = video.channelTitle,
+                                            color = MaterialTheme.colorScheme.onBackground,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        if (video.subscriberCount.isNotBlank()) {
+                                            Text(
+                                                text = video.subscriberCount,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                fontSize = 11.sp
+                                            )
+                                        }
+                                    }
+
+                                    Button(
+                                        onClick = { watchViewModel.toggleSubscription() },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (isSubscribed) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.onBackground
+                                        ),
+                                        shape = RoundedCornerShape(18.dp),
+                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                                    ) {
+                                        Text(
+                                            text = if (isSubscribed) "Subscribed" else "Subscribe",
+                                            color = if (isSubscribed) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.background,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Action Buttons: Like, Save to Watch Later
+                            item {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Surface(
+                                        shape = RoundedCornerShape(18.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        modifier = Modifier.clickable { watchViewModel.toggleLike() }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = if (isLiked) AppIcons.ThumbUp else AppIcons.ThumbUpOutlined,
+                                                contentDescription = "Like",
+                                                tint = if (isLiked) YouTubeRed else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = if (isLiked) "Liked" else "Like",
+                                                fontSize = 13.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+
+                                    Surface(
+                                        shape = RoundedCornerShape(18.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        modifier = Modifier.clickable { watchViewModel.toggleWatchLater() }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = AppIcons.WatchLater,
+                                                contentDescription = "Save",
+                                                tint = if (isInWatchLater) YouTubeRed else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = if (isInWatchLater) "Saved" else "Save",
+                                                fontSize = 13.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Related Videos Section
+                            items(relatedVideos, key = { it.id }) { rel ->
+                                YouTubeVideoCard(
+                                    video = rel,
+                                    onClick = { playerStateHolder.playVideo(rel) }
+                                )
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // Mini Player Bar Content Overlay (Fades in when progress -> 1f)
-        if (progress > 0.05f && !isFullScreen) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp)
-                    .align(Alignment.TopStart)
-                    .graphicsLayer { alpha = progress }
-                    .background(MaterialTheme.colorScheme.surface)
-                    .clickable {
-                        coroutineScope.launch {
-                            playerStateHolder.miniPlayerProgress.animateTo(0f, spring(stiffness = 400f))
-                        }
-                    }
-            ) {
-                // Top Progress Red Line
-                if (durationMs > 0) {
-                    val progressFraction = (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth(progressFraction)
-                            .height(2.dp)
-                            .background(YouTubeRed)
-                            .align(Alignment.TopStart)
-                    )
-                }
-
-                Row(
+            // Mini Player Bar Content Overlay (Fades in when progress -> 1f)
+            if (progress > 0.05f && !isFullScreen) {
+                Box(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(start = with(density) { miniThumbWidthPx.toDp() } + 10.dp, end = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .fillMaxWidth()
+                        .height(56.dp)
+                        .align(Alignment.TopStart)
+                        .graphicsLayer { alpha = progress }
+                        .background(MaterialTheme.colorScheme.surface)
+                        .clickable {
+                            coroutineScope.launch {
+                                playerStateHolder.miniPlayerProgress.animateTo(0f, spring(stiffness = 400f))
+                            }
+                        }
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = video.title,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = video.channelTitle,
-                            fontSize = 11.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                    // Top Progress Red Line
+                    if (durationMs > 0) {
+                        val progressFraction = (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(progressFraction)
+                                .height(2.dp)
+                                .background(YouTubeRed)
+                                .align(Alignment.TopStart)
                         )
                     }
 
-                    IconButton(onClick = { playerStateHolder.playPause() }) {
-                        Icon(
-                            imageVector = if (isPlaying) AppIcons.Pause else AppIcons.Play,
-                            contentDescription = if (isPlaying) "Pause" else "Play",
-                            tint = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(start = with(density) { miniThumbWidthPx.toDp() } + 10.dp, end = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = video.title,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = video.channelTitle,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
 
-                    IconButton(onClick = { playerStateHolder.dismissPlayer() }) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Close",
-                            tint = MaterialTheme.colorScheme.onSurface
-                        )
+                        IconButton(onClick = { playerStateHolder.playPause() }) {
+                            Icon(
+                                imageVector = if (isPlaying) AppIcons.Pause else AppIcons.Play,
+                                contentDescription = if (isPlaying) "Pause" else "Play",
+                                tint = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+
+                        IconButton(onClick = { playerStateHolder.dismissPlayer() }) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close",
+                                tint = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
                     }
                 }
             }

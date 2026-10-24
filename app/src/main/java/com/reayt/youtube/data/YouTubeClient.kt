@@ -142,29 +142,79 @@ object YouTubeClient {
     }
 
     /**
+     * Fetches real YouTube Home feed using InnerTube /browse (browseId: FEwhat_to_watch)
+     * and continuation pagination.
+     */
+    suspend fun fetchBrowseFeed(continuationToken: String? = null): ResultState<YouTubePagedResult> = withContext(Dispatchers.IO) {
+        try {
+            val body = JSONObject().put("context", WEB_CLIENT_CONTEXT)
+            if (!continuationToken.isNullOrBlank()) {
+                body.put("continuation", continuationToken)
+            } else {
+                body.put("browseId", "FEwhat_to_watch")
+            }
+
+            val req = Request.Builder()
+                .url("$YT_BASE/browse?prettyPrint=false")
+                .post(body.toString().toRequestBody(JSON))
+                .header("User-Agent", NetworkModule.UA_WEB)
+                .header("Origin", ORIGIN_YT)
+                .header("Referer", "$ORIGIN_YT/")
+                .build()
+
+            NetworkModule.apiClient.newCall(req).await().use { resp ->
+                if (resp.code == 429) {
+                    return@withContext ResultState.Blocked("Too many requests from YouTube. Please try again in a few moments.")
+                }
+                if (!resp.isSuccessful) {
+                    return@withContext ResultState.NetworkError("Home browse failed with HTTP ${resp.code}")
+                }
+                val raw = resp.body?.string().orEmpty()
+                if (raw.isBlank()) {
+                    return@withContext ResultState.ParseError("Empty response from YouTube browse")
+                }
+                val json = JSONObject(raw)
+                val videos = parseVideoRenderers(json)
+                val nextToken = extractContinuationToken(json)
+                ResultState.Success(YouTubePagedResult(videos, nextToken))
+            }
+        } catch (e: IOException) {
+            ResultState.NetworkError("Network connection failed. Please check your internet.", e)
+        } catch (e: Throwable) {
+            Log.e(TAG, "fetchBrowseFeed error: ${e.message}", e)
+            ResultState.ParseError("Error reading home feed: ${e.message}", e)
+        }
+    }
+
+    /**
      * Fetches video feed for a category chip with continuation pagination.
+     * Uses official InnerTube /browse for "All" feed.
      */
     suspend fun fetchFeedPaged(
         category: String,
         continuationToken: String? = null
     ): ResultState<YouTubePagedResult> = withContext(Dispatchers.IO) {
-        if (!continuationToken.isNullOrBlank()) {
-            return@withContext searchVideosPaged("", continuationToken)
+        if (category.equals("All", ignoreCase = true)) {
+            fetchBrowseFeed(continuationToken)
+        } else {
+            if (!continuationToken.isNullOrBlank()) {
+                searchVideosPaged("", continuationToken)
+            } else {
+                val query = when (category.lowercase(Locale.ROOT)) {
+                    "trending" -> "trending viral"
+                    "gaming" -> "gaming highlights"
+                    "music" -> "official music video songs"
+                    "live" -> "live news stream"
+                    "podcasts" -> "popular podcast full episode"
+                    "news" -> "world news breaking updates"
+                    "technology" -> "technology tech gadgets AI"
+                    "animation" -> "animation film"
+                    "mixes" -> "music mix playlist"
+                    else -> category
+                }
+                searchVideosPaged(query)
+            }
         }
-        val query = when (category.lowercase(Locale.ROOT)) {
-            "all" -> "trending popular videos"
-            "trending" -> "trending top global viral"
-            "gaming" -> "popular gaming highlights"
-            "music" -> "official music video hits 2026"
-            "live" -> "live news stream podcast"
-            "podcasts" -> "full episode popular podcast"
-            "news" -> "world news breaking updates"
-            "technology" -> "technology AI gadgets reviews"
-            "animation" -> "popular animation short films"
-            "mixes" -> "best remix music playlist"
-            else -> "$category trending"
-        }
-        searchVideosPaged(query)
     }
 
     /**
@@ -514,6 +564,11 @@ object YouTubeClient {
                             viewCount = vpi.optJSONObject("viewCount")?.optJSONObject("videoViewCountRenderer")?.optString("shortViewCount")
                                 ?: joinRuns(vpi.optJSONObject("viewCount")?.optJSONObject("videoViewCountRenderer")?.optJSONObject("viewCount"))
                             publishedTime = joinRuns(vpi.optJSONObject("dateText"))
+
+                            val buttons = vpi.optJSONObject("topLevelButtons")?.optJSONObject("segmentedLikeDislikeButtonRenderer")
+                            val likeBtn = buttons?.optJSONObject("likeButton")?.optJSONObject("toggleButtonRenderer")
+                            likesCount = likeBtn?.optJSONObject("defaultText")?.optString("simpleText")
+                                ?: joinRuns(likeBtn?.optJSONObject("defaultText"))
                         }
                         if (c.has("videoSecondaryInfoRenderer")) {
                             val vsi = c.getJSONObject("videoSecondaryInfoRenderer")
@@ -535,7 +590,7 @@ object YouTubeClient {
 
                 val primaryVideo = YouTubeVideo(
                     id = videoId,
-                    title = title.ifBlank { "YouTube Video" },
+                    title = title,
                     channelTitle = channelTitle,
                     channelId = channelId,
                     channelAvatarUrl = channelAvatar,
@@ -717,63 +772,188 @@ object YouTubeClient {
         return obj.optString("simpleText", "")
     }
 
-    private fun parseVideoRenderers(root: JSONObject): List<YouTubeVideo> {
+    private fun isShortsItem(obj: JSONObject): Boolean {
+        if (obj.has("reelShelfRenderer") || obj.has("reelItemRenderer") || obj.has("shortsLockupViewModel")) {
+            return true
+        }
+        val nav = obj.optJSONObject("navigationEndpoint")
+        if (nav != null && nav.has("reelWatchEndpoint")) {
+            return true
+        }
+        val url = nav?.optJSONObject("commandMetadata")?.optJSONObject("webCommandMetadata")?.optString("url").orEmpty()
+        if (url.contains("/shorts/")) {
+            return true
+        }
+        val contentType = obj.optString("contentType")
+        if (contentType.contains("SHORTS", ignoreCase = true)) {
+            return true
+        }
+        return false
+    }
+
+    private fun parseLockupViewModel(node: JSONObject): YouTubeVideo? {
+        val lvm = node.optJSONObject("lockupViewModel") ?: return null
+        if (isShortsItem(lvm)) return null
+
+        val contentId = lvm.optString("contentId")
+        val vid = if (contentId.isNotBlank()) contentId else {
+            lvm.optJSONObject("rendererContext")
+                ?.optJSONObject("commandContext")
+                ?.optJSONObject("onTap")
+                ?.optJSONObject("innertubeCommand")
+                ?.optJSONObject("watchEndpoint")
+                ?.optString("videoId").orEmpty()
+        }
+        if (vid.isBlank()) return null
+
+        val title = lvm.optJSONObject("metadata")
+            ?.optJSONObject("lockupMetadataViewModel")
+            ?.optJSONObject("title")
+            ?.optString("content").orEmpty()
+
+        var channel = ""
+        var views = ""
+        var published = ""
+        val rows = lvm.optJSONObject("metadata")
+            ?.optJSONObject("lockupMetadataViewModel")
+            ?.optJSONObject("metadata")
+            ?.optJSONObject("contentMetadataViewModel")
+            ?.optJSONArray("metadataRows")
+
+        if (rows != null) {
+            if (rows.length() > 0) {
+                val row0 = rows.optJSONObject(0)?.optJSONArray("parts")
+                if (row0 != null && row0.length() > 0) {
+                    channel = row0.optJSONObject(0)?.optJSONObject("text")?.optString("content").orEmpty()
+                }
+            }
+            if (rows.length() > 1) {
+                val row1 = rows.optJSONObject(1)?.optJSONArray("parts")
+                if (row1 != null) {
+                    if (row1.length() > 0) {
+                        views = row1.optJSONObject(0)?.optJSONObject("text")?.optString("content").orEmpty()
+                    }
+                    if (row1.length() > 1) {
+                        published = row1.optJSONObject(1)?.optJSONObject("text")?.optString("content").orEmpty()
+                    }
+                }
+            }
+        }
+
+        var thumb = "https://i.ytimg.com/vi/$vid/hqdefault.jpg"
+        val sources = lvm.optJSONObject("contentImage")
+            ?.optJSONObject("thumbnailViewModel")
+            ?.optJSONObject("image")
+            ?.optJSONArray("sources")
+        if (sources != null && sources.length() > 0) {
+            thumb = sources.optJSONObject(sources.length() - 1)?.optString("url") ?: thumb
+        }
+
+        var duration = ""
+        val overlays = lvm.optJSONObject("contentImage")
+            ?.optJSONObject("thumbnailViewModel")
+            ?.optJSONArray("overlays")
+        if (overlays != null) {
+            for (i in 0 until overlays.length()) {
+                val ov = overlays.optJSONObject(i)?.optJSONObject("thumbnailOverlayTimeStatusRenderer")
+                if (ov != null) {
+                    duration = ov.optJSONObject("text")?.optString("simpleText")
+                        ?: joinRuns(ov.optJSONObject("text"))
+                    break
+                }
+            }
+        }
+
+        return YouTubeVideo(
+            id = vid,
+            title = title,
+            channelTitle = channel,
+            thumbnailUrl = thumb,
+            durationText = duration,
+            viewCountText = views,
+            publishedTimeText = published
+        )
+    }
+
+    private fun parseVideoRenderer(vr: JSONObject): YouTubeVideo? {
+        val vid = vr.optString("videoId")
+        if (vid.isBlank()) return null
+        if (isShortsItem(vr)) return null
+
+        val title = joinRuns(vr.optJSONObject("title"))
+        val channel = joinRuns(vr.optJSONObject("ownerText"))
+            .ifBlank { joinRuns(vr.optJSONObject("shortBylineText")) }
+
+        val channelBrowseId = vr.optJSONObject("ownerText")
+            ?.optJSONArray("runs")?.optJSONObject(0)
+            ?.optJSONObject("navigationEndpoint")
+            ?.optJSONObject("browseEndpoint")?.optString("browseId").orEmpty()
+
+        val views = vr.optJSONObject("viewCountText")?.optString("simpleText")
+            ?: vr.optJSONObject("shortViewCountText")?.optString("simpleText")
+            ?: joinRuns(vr.optJSONObject("viewCountText"))
+
+        val published = vr.optJSONObject("publishedTimeText")?.optString("simpleText")
+            ?: joinRuns(vr.optJSONObject("publishedTimeText"))
+        val duration = vr.optJSONObject("lengthText")?.optString("simpleText")
+            ?: joinRuns(vr.optJSONObject("lengthText"))
+
+        val thumbs = vr.optJSONObject("thumbnail")?.optJSONArray("thumbnails")
+        val thumb = if (thumbs != null && thumbs.length() > 0) {
+            thumbs.getJSONObject(thumbs.length() - 1).optString("url")
+        } else "https://i.ytimg.com/vi/$vid/hqdefault.jpg"
+
+        val channelThumbs = vr.optJSONObject("channelThumbnailSupportedRenderers")
+            ?.optJSONObject("channelThumbnailWithLinkRenderer")
+            ?.optJSONObject("thumbnail")?.optJSONArray("thumbnails")
+        val channelAvatar = if (channelThumbs != null && channelThumbs.length() > 0) {
+            channelThumbs.getJSONObject(channelThumbs.length() - 1).optString("url")
+        } else ""
+
+        val desc = joinRuns(vr.optJSONObject("descriptionSnippet"))
+
+        return YouTubeVideo(
+            id = vid,
+            title = title,
+            channelTitle = channel,
+            channelId = channelBrowseId,
+            channelAvatarUrl = channelAvatar,
+            thumbnailUrl = thumb,
+            durationText = duration,
+            viewCountText = views,
+            publishedTimeText = published,
+            description = desc
+        )
+    }
+
+    fun parseVideoRenderers(root: JSONObject): List<YouTubeVideo> {
         val out = mutableListOf<YouTubeVideo>()
         val seen = mutableSetOf<String>()
 
         fun extract(node: Any) {
             when (node) {
                 is JSONObject -> {
+                    if (isShortsItem(node)) {
+                        return
+                    }
+
                     if (node.has("videoRenderer")) {
-                        val vr = node.getJSONObject("videoRenderer")
-                        val vid = vr.optString("videoId")
-                        if (vid.isNotBlank() && seen.add(vid)) {
-                            val title = joinRuns(vr.optJSONObject("title"))
-                            val channel = joinRuns(vr.optJSONObject("ownerText"))
-                                .ifBlank { joinRuns(vr.optJSONObject("shortBylineText")) }
-
-                            val channelBrowseId = vr.optJSONObject("ownerText")
-                                ?.optJSONArray("runs")?.optJSONObject(0)
-                                ?.optJSONObject("navigationEndpoint")
-                                ?.optJSONObject("browseEndpoint")?.optString("browseId").orEmpty()
-
-                            val views = vr.optJSONObject("viewCountText")?.optString("simpleText")
-                                ?: vr.optJSONObject("shortViewCountText")?.optString("simpleText").orEmpty()
-
-                            val published = vr.optJSONObject("publishedTimeText")?.optString("simpleText").orEmpty()
-                            val duration = vr.optJSONObject("lengthText")?.optString("simpleText").orEmpty()
-
-                            val thumbs = vr.optJSONObject("thumbnail")?.optJSONArray("thumbnails")
-                            val thumb = if (thumbs != null && thumbs.length() > 0) {
-                                thumbs.getJSONObject(thumbs.length() - 1).optString("url")
-                            } else "https://i.ytimg.com/vi/$vid/hqdefault.jpg"
-
-                            val channelThumbs = vr.optJSONObject("channelThumbnailSupportedRenderers")
-                                ?.optJSONObject("channelThumbnailWithLinkRenderer")
-                                ?.optJSONObject("thumbnail")?.optJSONArray("thumbnails")
-                            val channelAvatar = if (channelThumbs != null && channelThumbs.length() > 0) {
-                                channelThumbs.getJSONObject(channelThumbs.length() - 1).optString("url")
-                            } else ""
-
-                            val desc = joinRuns(vr.optJSONObject("descriptionSnippet"))
-
-                            out.add(
-                                YouTubeVideo(
-                                    id = vid,
-                                    title = title.ifBlank { "Video" },
-                                    channelTitle = channel.ifBlank { "Channel" },
-                                    channelId = channelBrowseId,
-                                    channelAvatarUrl = channelAvatar,
-                                    thumbnailUrl = thumb,
-                                    durationText = duration,
-                                    viewCountText = views,
-                                    publishedTimeText = published,
-                                    description = desc,
-                                    isShort = false
-                                )
-                            )
+                        val v = parseVideoRenderer(node.getJSONObject("videoRenderer"))
+                        if (v != null && seen.add(v.id)) {
+                            out.add(v)
+                        }
+                    } else if (node.has("compactVideoRenderer")) {
+                        val v = parseVideoRenderer(node.getJSONObject("compactVideoRenderer"))
+                        if (v != null && seen.add(v.id)) {
+                            out.add(v)
+                        }
+                    } else if (node.has("lockupViewModel")) {
+                        val v = parseLockupViewModel(node)
+                        if (v != null && seen.add(v.id)) {
+                            out.add(v)
                         }
                     }
+
                     for (k in node.keys()) {
                         extract(node.get(k))
                     }
@@ -790,7 +970,7 @@ object YouTubeClient {
         return out
     }
 
-    private fun extractContinuationToken(root: JSONObject): String? {
+    fun extractContinuationToken(root: JSONObject): String? {
         var foundToken: String? = null
 
         fun search(node: Any) {
@@ -809,6 +989,13 @@ object YouTubeClient {
                             ?.optJSONObject("continuationEndpoint")
                             ?.optJSONObject("continuationCommand")
                             ?.optString("token")
+                        if (!token.isNullOrBlank()) {
+                            foundToken = token
+                            return
+                        }
+                    }
+                    if (node.has("nextContinuationData")) {
+                        val token = node.optJSONObject("nextContinuationData")?.optString("continuation")
                         if (!token.isNullOrBlank()) {
                             foundToken = token
                             return

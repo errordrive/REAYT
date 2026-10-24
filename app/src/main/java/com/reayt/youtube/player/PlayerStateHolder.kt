@@ -23,17 +23,31 @@ import com.reayt.youtube.model.ResultState
 import com.reayt.youtube.model.YouTubeStreamInfo
 import com.reayt.youtube.model.YouTubeVideo
 import com.reayt.youtube.service.PlaybackService
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+sealed interface PlayerCommand {
+    data object Expand : PlayerCommand
+    data object Minimise : PlayerCommand
+    data object Dismiss : PlayerCommand
+}
 
 /**
  * Process-wide, service-backed playback state holder.
@@ -42,9 +56,21 @@ import kotlinx.coroutines.withContext
 class PlayerStateHolder(private val context: Context) {
 
     private val tag = "PlayerStateHolder"
-    private val scope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
+    private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        Log.e(tag, "Uncaught coroutine exception: ${throwable.message}", throwable)
+        if (throwable !is CancellationException) {
+            _streamError.value = throwable.localizedMessage ?: "An unexpected error occurred"
+            _isLoadingStream.value = false
+        }
+    }
+    private val scope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob() + exceptionHandler)
 
     private var controllerFuture: ListenableFuture<MediaController>? = null
+    private var pendingVideo: YouTubeVideo? = null
+    private var pendingStartPositionMs: Long = 0L
+
+    private val _playerCommands = MutableSharedFlow<PlayerCommand>(extraBufferCapacity = 64)
+    val playerCommands: SharedFlow<PlayerCommand> = _playerCommands.asSharedFlow()
 
     private val _mediaController = MutableStateFlow<Player?>(null)
     val mediaController: StateFlow<Player?> = _mediaController.asStateFlow()
@@ -78,6 +104,17 @@ class PlayerStateHolder(private val context: Context) {
 
     private val _selectedQuality = MutableStateFlow("Auto")
     val selectedQuality: StateFlow<String> = _selectedQuality.asStateFlow()
+
+    val availableQualities: StateFlow<List<String>> = _streamInfo.map { info ->
+        if (info == null) listOf("Auto")
+        else {
+            val heights = info.formats.filter { it.isVideo && it.height > 0 }
+                .map { "${it.height}p" }
+                .distinct()
+                .sortedByDescending { it.removeSuffix("p").toIntOrNull() ?: 0 }
+            if (heights.isEmpty()) listOf("Auto") else listOf("Auto") + heights
+        }
+    }.stateIn(scope, SharingStarted.Eagerly, listOf("Auto"))
 
     private val _isAudioOnly = MutableStateFlow(false)
     val isAudioOnly: StateFlow<Boolean> = _isAudioOnly.asStateFlow()
@@ -120,6 +157,12 @@ class PlayerStateHolder(private val context: Context) {
                 try {
                     val controller = future.get()
                     _mediaController.value = controller
+
+                    pendingVideo?.let { queuedVideo ->
+                        val pos = pendingStartPositionMs
+                        pendingVideo = null
+                        playVideo(queuedVideo, pos)
+                    }
 
                     controller.addListener(object : Player.Listener {
                         override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -179,27 +222,42 @@ class PlayerStateHolder(private val context: Context) {
         _isLoadingStream.value = true
         retryCount = 0
 
-        // Auto-expand player when a new video is selected
-        scope.launch {
-            miniPlayerProgress.animateTo(0f, spring(stiffness = 400f))
+        // Auto-expand player via event flow (MonotonicFrameClock safe)
+        _playerCommands.tryEmit(PlayerCommand.Expand)
+
+        if (_mediaController.value == null) {
+            pendingVideo = video
+            pendingStartPositionMs = startPositionMs
+            bindMediaController()
         }
 
         resolveJob?.cancel()
         resolveJob = scope.launch {
-            // Concurrently fetch video details / up-next and stream info
-            val detailsDeferred = launch(Dispatchers.IO) {
-                val detailsResult = YouTubeClient.fetchNextAndDetails(video.id)
-                if (detailsResult is ResultState.Success) {
-                    val (enrichedVideo, related) = detailsResult.data
-                    withContext(Dispatchers.Main) {
-                        _currentVideo.value = enrichedVideo
-                        _relatedVideos.value = related
+            try {
+                // Concurrently fetch video details / up-next and stream info
+                val detailsDeferred = launch(Dispatchers.IO) {
+                    try {
+                        val detailsResult = YouTubeClient.fetchNextAndDetails(video.id)
+                        if (detailsResult is ResultState.Success) {
+                            val (enrichedVideo, related) = detailsResult.data
+                            withContext(Dispatchers.Main) {
+                                _currentVideo.value = enrichedVideo
+                                _relatedVideos.value = related
+                            }
+                        }
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        Log.w(tag, "Failed fetching details: ${e.message}")
                     }
                 }
-            }
 
-            resolveAndStartStream(video, startPositionMs)
-            detailsDeferred.join()
+                resolveAndStartStream(video, startPositionMs)
+                detailsDeferred.join()
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                _isLoadingStream.value = false
+                _streamError.value = e.localizedMessage ?: "Failed loading stream"
+            }
         }
     }
 
@@ -230,12 +288,22 @@ class PlayerStateHolder(private val context: Context) {
         }
     }
 
+    private fun cleanMimeType(mimeType: String?): String? {
+        if (mimeType.isNullOrBlank()) return null
+        return mimeType.substringBefore(";").trim()
+    }
+
     private fun loadMediaItemIntoController(
         video: YouTubeVideo,
         info: YouTubeStreamInfo,
         startPositionMs: Long
     ) {
-        val controller = _mediaController.value ?: return
+        val controller = _mediaController.value
+        if (controller == null) {
+            pendingVideo = video
+            pendingStartPositionMs = startPositionMs
+            return
+        }
 
         val metadata = MediaMetadata.Builder()
             .setTitle(video.title)
@@ -243,14 +311,26 @@ class PlayerStateHolder(private val context: Context) {
             .setArtworkUri(Uri.parse(video.thumbnailUrl))
             .build()
 
-        val mediaUri = info.hlsUrl ?: info.directVideoUrl ?: return
-        val mimeType = if (info.hlsUrl != null) MimeTypes.APPLICATION_M3U8 else info.videoMimeType
+        val rawUri = info.hlsUrl ?: info.directVideoUrl ?: return
+        val rawMime = if (info.hlsUrl != null) MimeTypes.APPLICATION_M3U8 else info.videoMimeType
+        val cleanMime = cleanMimeType(rawMime)
+
+        // Build stream URI with embedded tags for ResolvingDataSource and separate audio merging
+        val uriBuilder = Uri.parse(rawUri).buildUpon()
+            .appendQueryParameter("__yt_client", info.clientName)
+        if (info.userAgent.isNotBlank()) {
+            uriBuilder.appendQueryParameter("__yt_ua", info.userAgent)
+        }
+        if (info.hlsUrl == null && info.directVideoUrl != null && !info.audioUrl.isNullOrBlank()) {
+            uriBuilder.appendQueryParameter("__yt_audio_url", info.audioUrl)
+        }
+        val mediaUri = uriBuilder.build()
 
         val mediaItem = MediaItem.Builder()
             .setUri(mediaUri)
             .apply {
-                if (!mimeType.isNullOrBlank()) {
-                    setMimeType(mimeType)
+                if (!cleanMime.isNullOrBlank()) {
+                    setMimeType(cleanMime)
                 }
             }
             .setMediaMetadata(metadata)
@@ -365,6 +445,7 @@ class PlayerStateHolder(private val context: Context) {
         _currentVideo.value = null
         _streamInfo.value = null
         _relatedVideos.value = emptyList()
+        _playerCommands.tryEmit(PlayerCommand.Dismiss)
         scope.launch {
             miniPlayerProgress.snapTo(1f)
         }

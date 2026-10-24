@@ -37,7 +37,6 @@
                 <data android:scheme="https" android:host="m.youtube.com" />
                 <data android:scheme="https" android:host="youtu.be" />
                 <data android:pathPrefix="/watch" />
-                <data android:pathPrefix="/shorts" />
                 <data android:pathPrefix="/channel" />
                 <data android:pathPrefix="/@" />
             </intent-filter>
