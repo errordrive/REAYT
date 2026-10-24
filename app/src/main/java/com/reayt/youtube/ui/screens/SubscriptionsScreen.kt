@@ -1,169 +1,148 @@
 package com.reayt.youtube.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Text
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import com.reayt.youtube.data.YouTubeClient
-import com.reayt.youtube.data.YouTubeRepository
 import com.reayt.youtube.model.YouTubeVideo
-import com.reayt.youtube.player.VideoPlaybackManager
 import com.reayt.youtube.ui.components.YouTubeTopBar
 import com.reayt.youtube.ui.components.YouTubeVideoCard
-import com.reayt.youtube.ui.theme.YouTubeDarkBg
 import com.reayt.youtube.ui.theme.YouTubeRed
-import com.reayt.youtube.ui.theme.YouTubeTextPrimary
-import com.reayt.youtube.ui.theme.YouTubeTextSecondary
-import kotlinx.coroutines.launch
+import com.reayt.youtube.ui.viewmodel.SubscriptionsViewModel
+import org.koin.androidx.compose.koinViewModel
 
 @Composable
 fun SubscriptionsScreen(
     onSearchClick: () -> Unit = {},
     onProfileClick: () -> Unit = {},
+    onVideoClick: (YouTubeVideo) -> Unit = {},
+    viewModel: SubscriptionsViewModel = koinViewModel(),
     modifier: Modifier = Modifier
 ) {
-    val subscriptions by YouTubeRepository.subscriptions.collectAsState()
-    val subVideos by YouTubeRepository.subscriptionVideos.collectAsState()
-    val feedVideos by YouTubeRepository.feedVideos.collectAsState()
-
-    var selectedChannelTitle by remember { mutableStateOf<String?>(null) }
-    var channelFilteredVideos by remember { mutableStateOf<List<YouTubeVideo>>(emptyList()) }
-    var isLoadingChannelVideos by remember { mutableStateOf(false) }
-
-    val coroutineScope = rememberCoroutineScope()
-
-    val displayVideos = remember(selectedChannelTitle, channelFilteredVideos, subVideos, feedVideos) {
-        if (selectedChannelTitle != null) channelFilteredVideos
-        else subVideos.ifEmpty { feedVideos }
-    }
+    val subscriptions by viewModel.subscriptions.collectAsState()
+    val feedVideos by viewModel.feedVideos.collectAsState()
+    val isLoading by viewModel.isLoading.collectAsState()
 
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(YouTubeDarkBg)
+            .background(MaterialTheme.colorScheme.background)
     ) {
-        // YouTube Top Header Bar
         YouTubeTopBar(
             onSearchClick = onSearchClick,
             onProfileClick = onProfileClick
         )
 
-        // Subscriptions Avatar Row at top
-        LazyRow(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            items(subscriptions) { channel ->
-                val isSelected = selectedChannelTitle == channel.title
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier
-                        .width(62.dp)
-                        .clickable {
-                            if (isSelected) {
-                                selectedChannelTitle = null
-                            } else {
-                                selectedChannelTitle = channel.title
-                                isLoadingChannelVideos = true
-                                coroutineScope.launch {
-                                    try {
-                                        channelFilteredVideos = YouTubeClient.fetchChannelVideos(channel.title)
-                                    } finally {
-                                        isLoadingChannelVideos = false
-                                    }
-                                }
-                            }
-                        }
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(54.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF282828))
-                            .then(
-                                if (isSelected) Modifier.border(2.dp, YouTubeRed, CircleShape)
-                                else Modifier
-                            ),
-                        contentAlignment = Alignment.Center
+        if (subscriptions.isNotEmpty()) {
+            // Horizontal list of subscribed channels
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                subscriptions.forEach { ch ->
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.clickable { viewModel.loadChannelUploads(ch.title) }
                     ) {
-                        if (channel.avatarUrl.isNotBlank()) {
+                        if (ch.avatarUrl.isNotBlank()) {
                             AsyncImage(
-                                model = channel.avatarUrl,
-                                contentDescription = channel.title,
+                                model = ch.avatarUrl,
+                                contentDescription = ch.title,
                                 contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
+                                modifier = Modifier
+                                    .size(54.dp)
+                                    .clip(CircleShape)
                             )
                         } else {
-                            Text(
-                                text = channel.title.firstOrNull()?.uppercase() ?: "C",
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 18.sp
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(54.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = ch.title.firstOrNull()?.uppercase() ?: "C",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 18.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = ch.title.take(10),
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
                     }
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    Text(
-                        text = channel.title,
-                        color = if (isSelected) Color.White else YouTubeTextSecondary,
-                        fontSize = 11.sp,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
                 }
             }
+            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
         }
 
-        Spacer(modifier = Modifier.height(4.dp))
-
-        if (isLoadingChannelVideos) {
+        if (isLoading) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
                 contentAlignment = Alignment.Center
             ) {
-                CircularProgressIndicator(
-                    color = YouTubeRed,
-                    strokeWidth = 3.dp,
-                    modifier = Modifier.size(36.dp)
-                )
+                CircularProgressIndicator(color = YouTubeRed)
+            }
+        } else if (subscriptions.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(24.dp)
+                ) {
+                    Text(
+                        text = "Don't miss new videos",
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Subscribe to your favorite channels to see their latest uploads here.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         } else {
-            // Subscribed Videos Feed
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
             ) {
-                items(displayVideos) { video ->
+                items(feedVideos, key = { it.id }) { video ->
                     YouTubeVideoCard(
                         video = video,
-                        onClick = { VideoPlaybackManager.playVideo(video) },
-                        onSaveToWatchLater = { YouTubeRepository.toggleWatchLater(video) }
+                        onClick = { onVideoClick(video) }
                     )
                 }
             }

@@ -6,6 +6,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Subscriptions
 import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Subscriptions
+import androidx.compose.material.icons.outlined.VideoLibrary
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -13,8 +16,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.reayt.youtube.ui.theme.YouTubeDarkBg
-import com.reayt.youtube.ui.theme.YouTubeTextPrimary
 
 enum class YouTubeNavTab {
     HOME, SUBSCRIPTIONS, YOU
@@ -27,17 +28,18 @@ fun YouTubeBottomNav(
     modifier: Modifier = Modifier
 ) {
     NavigationBar(
-        containerColor = YouTubeDarkBg,
-        tonalElevation = 6.dp,
-        modifier = modifier.height(58.dp)
+        containerColor = MaterialTheme.colorScheme.background,
+        tonalElevation = 4.dp,
+        modifier = modifier.height(56.dp)
     ) {
         // Home Tab
+        val isHome = selectedTab == YouTubeNavTab.HOME
         NavigationBarItem(
-            selected = selectedTab == YouTubeNavTab.HOME,
+            selected = isHome,
             onClick = { onTabSelected(YouTubeNavTab.HOME) },
             icon = {
                 Icon(
-                    imageVector = Icons.Default.Home,
+                    imageVector = if (isHome) Icons.Filled.Home else Icons.Outlined.Home,
                     contentDescription = "Home",
                     modifier = Modifier.size(24.dp)
                 )
@@ -46,25 +48,26 @@ fun YouTubeBottomNav(
                 Text(
                     text = "Home",
                     fontSize = 11.sp,
-                    fontWeight = if (selectedTab == YouTubeNavTab.HOME) FontWeight.Bold else FontWeight.Normal
+                    fontWeight = if (isHome) FontWeight.Bold else FontWeight.Normal
                 )
             },
             colors = NavigationBarItemDefaults.colors(
-                selectedIconColor = YouTubeTextPrimary,
-                selectedTextColor = YouTubeTextPrimary,
-                unselectedIconColor = Color(0xFFAAAAAA),
-                unselectedTextColor = Color(0xFFAAAAAA),
+                selectedIconColor = MaterialTheme.colorScheme.onBackground,
+                selectedTextColor = MaterialTheme.colorScheme.onBackground,
+                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 indicatorColor = Color.Transparent
             )
         )
 
         // Subscriptions Tab
+        val isSubs = selectedTab == YouTubeNavTab.SUBSCRIPTIONS
         NavigationBarItem(
-            selected = selectedTab == YouTubeNavTab.SUBSCRIPTIONS,
+            selected = isSubs,
             onClick = { onTabSelected(YouTubeNavTab.SUBSCRIPTIONS) },
             icon = {
                 Icon(
-                    imageVector = Icons.Default.Subscriptions,
+                    imageVector = if (isSubs) Icons.Filled.Subscriptions else Icons.Outlined.Subscriptions,
                     contentDescription = "Subscriptions",
                     modifier = Modifier.size(23.dp)
                 )
@@ -73,25 +76,26 @@ fun YouTubeBottomNav(
                 Text(
                     text = "Subscriptions",
                     fontSize = 11.sp,
-                    fontWeight = if (selectedTab == YouTubeNavTab.SUBSCRIPTIONS) FontWeight.Bold else FontWeight.Normal
+                    fontWeight = if (isSubs) FontWeight.Bold else FontWeight.Normal
                 )
             },
             colors = NavigationBarItemDefaults.colors(
-                selectedIconColor = YouTubeTextPrimary,
-                selectedTextColor = YouTubeTextPrimary,
-                unselectedIconColor = Color(0xFFAAAAAA),
-                unselectedTextColor = Color(0xFFAAAAAA),
+                selectedIconColor = MaterialTheme.colorScheme.onBackground,
+                selectedTextColor = MaterialTheme.colorScheme.onBackground,
+                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 indicatorColor = Color.Transparent
             )
         )
 
         // You Tab
+        val isYou = selectedTab == YouTubeNavTab.YOU
         NavigationBarItem(
-            selected = selectedTab == YouTubeNavTab.YOU,
+            selected = isYou,
             onClick = { onTabSelected(YouTubeNavTab.YOU) },
             icon = {
                 Icon(
-                    imageVector = Icons.Default.VideoLibrary,
+                    imageVector = if (isYou) Icons.Filled.VideoLibrary else Icons.Outlined.VideoLibrary,
                     contentDescription = "You",
                     modifier = Modifier.size(23.dp)
                 )
@@ -100,14 +104,14 @@ fun YouTubeBottomNav(
                 Text(
                     text = "You",
                     fontSize = 11.sp,
-                    fontWeight = if (selectedTab == YouTubeNavTab.YOU) FontWeight.Bold else FontWeight.Normal
+                    fontWeight = if (isYou) FontWeight.Bold else FontWeight.Normal
                 )
             },
             colors = NavigationBarItemDefaults.colors(
-                selectedIconColor = YouTubeTextPrimary,
-                selectedTextColor = YouTubeTextPrimary,
-                unselectedIconColor = Color(0xFFAAAAAA),
-                unselectedTextColor = Color(0xFFAAAAAA),
+                selectedIconColor = MaterialTheme.colorScheme.onBackground,
+                selectedTextColor = MaterialTheme.colorScheme.onBackground,
+                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 indicatorColor = Color.Transparent
             )
         )

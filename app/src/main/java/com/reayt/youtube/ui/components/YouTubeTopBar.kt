@@ -6,12 +6,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.NotificationsNone
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -22,15 +22,12 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.reayt.youtube.ui.theme.YouTubeDarkBg
 import com.reayt.youtube.ui.theme.YouTubeRed
-import com.reayt.youtube.ui.theme.YouTubeTextPrimary
 
 @Composable
 fun YouTubeTopBar(
     onSearchClick: () -> Unit = {},
     onNotificationsClick: () -> Unit = {},
-    onCastClick: () -> Unit = {},
     onProfileClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -38,7 +35,7 @@ fun YouTubeTopBar(
         modifier = modifier
             .fillMaxWidth()
             .height(54.dp)
-            .background(YouTubeDarkBg)
+            .background(MaterialTheme.colorScheme.background)
             .padding(horizontal = 14.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -65,7 +62,7 @@ fun YouTubeTopBar(
 
             Text(
                 text = "YouTube",
-                color = YouTubeTextPrimary,
+                color = MaterialTheme.colorScheme.onBackground,
                 fontSize = 19.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.SansSerif,
@@ -76,34 +73,14 @@ fun YouTubeTopBar(
         // Action Icons
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp)
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            IconButton(onClick = onCastClick) {
+            IconButton(onClick = onNotificationsClick) {
                 Icon(
-                    imageVector = Icons.Default.Cast,
-                    contentDescription = "Cast",
-                    tint = YouTubeTextPrimary,
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-
-            // Notification Bell with unread dot
-            Box {
-                IconButton(onClick = onNotificationsClick) {
-                    Icon(
-                        imageVector = Icons.Default.NotificationsNone,
-                        contentDescription = "Notifications",
-                        tint = YouTubeTextPrimary,
-                        modifier = Modifier.size(23.dp)
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .size(7.dp)
-                        .align(Alignment.TopEnd)
-                        .offset(x = (-8).dp, y = 10.dp)
-                        .clip(CircleShape)
-                        .background(YouTubeRed)
+                    imageVector = Icons.Default.NotificationsNone,
+                    contentDescription = "Notifications",
+                    tint = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.size(23.dp)
                 )
             }
 
@@ -111,25 +88,23 @@ fun YouTubeTopBar(
                 Icon(
                     imageVector = Icons.Default.Search,
                     contentDescription = "Search",
-                    tint = YouTubeTextPrimary,
+                    tint = MaterialTheme.colorScheme.onBackground,
                     modifier = Modifier.size(23.dp)
                 )
             }
 
-            Spacer(modifier = Modifier.width(4.dp))
-
-            // Profile Avatar
+            // User Avatar
             Box(
                 modifier = Modifier
-                    .size(28.dp)
+                    .size(30.dp)
                     .clip(CircleShape)
-                    .background(Color(0xFF8E24AA))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
                     .clickable { onProfileClick() },
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "Y",
-                    color = Color.White,
+                    text = "U",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold
                 )

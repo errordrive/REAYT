@@ -13,10 +13,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Text
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -25,32 +22,36 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.reayt.youtube.data.YouTubeRepository
-import com.reayt.youtube.player.VideoPlaybackManager
+import com.reayt.youtube.model.YouTubeVideo
 import com.reayt.youtube.ui.components.YouTubeFilterChips
 import com.reayt.youtube.ui.components.YouTubeTopBar
 import com.reayt.youtube.ui.components.YouTubeVideoCard
-import com.reayt.youtube.ui.theme.YouTubeDarkBg
 import com.reayt.youtube.ui.theme.YouTubeRed
-import com.reayt.youtube.ui.theme.YouTubeTextPrimary
-import com.reayt.youtube.ui.theme.YouTubeTextSecondary
+import com.reayt.youtube.ui.viewmodel.HomeViewModel
+import org.koin.androidx.compose.koinViewModel
+
+val DEFAULT_CATEGORIES = listOf(
+    "All", "Trending", "Gaming", "Music", "Live", "Podcasts", "News", "Technology", "Animation", "Mixes"
+)
 
 @Composable
 fun HomeScreen(
     onSearchClick: () -> Unit = {},
     onProfileClick: () -> Unit = {},
+    onVideoClick: (YouTubeVideo) -> Unit = {},
+    viewModel: HomeViewModel = koinViewModel(),
     modifier: Modifier = Modifier
 ) {
-    val feedVideos by YouTubeRepository.feedVideos.collectAsState()
-    val selectedCategory by YouTubeRepository.selectedCategory.collectAsState()
-    val isLoadingFeed by YouTubeRepository.isLoadingFeed.collectAsState()
-    val isPaginatingFeed by YouTubeRepository.isPaginatingFeed.collectAsState()
-    val hasMoreFeed by YouTubeRepository.hasMoreFeed.collectAsState()
-    val feedError by YouTubeRepository.feedError.collectAsState()
+    val feedVideos by viewModel.feedVideos.collectAsState()
+    val isFeedLoading by viewModel.isFeedLoading.collectAsState()
+    val isFeedPaginating by viewModel.isFeedPaginating.collectAsState()
+    val hasFeedMore by viewModel.hasFeedMore.collectAsState()
+    val feedError by viewModel.feedError.collectAsState()
+    val selectedCategory by viewModel.selectedCategory.collectAsState()
 
     val listState = rememberLazyListState()
 
-    // Automatic incremental pagination trigger as user scrolls near bottom
+    // Automatic incremental pagination trigger as user approaches end of list
     val shouldLoadMore by remember {
         derivedStateOf {
             val totalItems = listState.layoutInfo.totalItemsCount
@@ -60,33 +61,33 @@ fun HomeScreen(
     }
 
     LaunchedEffect(shouldLoadMore) {
-        if (shouldLoadMore && hasMoreFeed && !isLoadingFeed && !isPaginatingFeed) {
-            YouTubeRepository.loadMoreFeed()
+        if (shouldLoadMore && hasFeedMore && !isFeedLoading && !isFeedPaginating) {
+            viewModel.loadMore()
         }
     }
 
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(YouTubeDarkBg)
+            .background(MaterialTheme.colorScheme.background)
     ) {
-        // Official YouTube Top Bar
+        // Top Bar
         YouTubeTopBar(
             onSearchClick = onSearchClick,
             onProfileClick = onProfileClick
         )
 
-        // Filter Chips Bar
+        // Category Filter Chips
         YouTubeFilterChips(
-            categories = YouTubeRepository.categories,
+            categories = DEFAULT_CATEGORIES,
             selectedCategory = selectedCategory,
             onSelectCategory = { cat ->
-                YouTubeRepository.selectCategory(cat)
+                viewModel.selectCategory(cat)
             }
         )
 
-        // Initial Loading State: Skeleton shimmer cards
-        if (isLoadingFeed && feedVideos.isEmpty()) {
+        // Loading Skeleton
+        if (isFeedLoading && feedVideos.isEmpty()) {
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -97,89 +98,70 @@ fun HomeScreen(
                 }
             }
         } else if (feedVideos.isEmpty() && feedError != null) {
-            // Error State with Retry Button
+            // Error State with Retry
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
                 contentAlignment = Alignment.Center
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(24.dp)
+                ) {
                     Text(
                         text = "Connect to the internet",
-                        color = YouTubeTextPrimary,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold
+                        color = MaterialTheme.colorScheme.onBackground,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.SemiBold
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = feedError ?: "You're offline. Check your connection.",
-                        color = YouTubeTextSecondary,
-                        fontSize = 13.sp
+                        text = feedError ?: "You're offline. Check your connection or try again.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Button(
-                        onClick = { YouTubeRepository.refreshFeed() },
-                        colors = ButtonDefaults.buttonColors(containerColor = YouTubeRed),
-                        shape = RoundedCornerShape(20.dp)
+                        onClick = { viewModel.refresh() },
+                        colors = ButtonDefaults.buttonColors(containerColor = YouTubeRed)
                     ) {
-                        Text("Retry", color = Color.White)
+                        Text(text = "Retry", color = Color.White)
                     }
                 }
             }
         } else {
-            // Continuous Infinite Feed
+            // Main Feed List
             LazyColumn(
                 state = listState,
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
             ) {
-                items(feedVideos, key = { it.id }) { video ->
+                items(
+                    items = feedVideos,
+                    key = { it.id }
+                ) { video ->
                     YouTubeVideoCard(
                         video = video,
-                        onClick = {
-                            VideoPlaybackManager.playVideo(video)
-                        },
-                        onSaveToWatchLater = {
-                            YouTubeRepository.toggleWatchLater(video)
-                        }
+                        onClick = { onVideoClick(video) }
                     )
                 }
 
-                // Bottom Pagination Spinner or End-of-Feed Footer
-                item {
-                    if (isPaginatingFeed) {
-                        Row(
+                // Bottom Pagination Spinner
+                if (isFeedPaginating) {
+                    item(key = "feed_pagination_loader") {
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 18.dp),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
+                                .padding(vertical = 16.dp),
+                            contentAlignment = Alignment.Center
                         ) {
                             CircularProgressIndicator(
                                 color = YouTubeRed,
                                 strokeWidth = 2.5.dp,
                                 modifier = Modifier.size(24.dp)
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                text = "Loading more videos...",
-                                color = YouTubeTextSecondary,
-                                fontSize = 13.sp
-                            )
-                        }
-                    } else if (!hasMoreFeed && feedVideos.isNotEmpty()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 24.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "You're all caught up",
-                                color = YouTubeTextSecondary,
-                                fontSize = 13.sp
                             )
                         }
                     }
@@ -190,65 +172,58 @@ fun HomeScreen(
 }
 
 @Composable
-private fun VideoSkeletonCard() {
-    val infiniteTransition = rememberInfiniteTransition(label = "shimmer")
-    val alpha by infiniteTransition.animateFloat(
-        initialValue = 0.25f,
-        targetValue = 0.6f,
+fun VideoSkeletonCard() {
+    val transition = rememberInfiniteTransition()
+    val alpha by transition.animateFloat(
+        initialValue = 0.2f,
+        targetValue = 0.5f,
         animationSpec = infiniteRepeatable(
-            animation = tween(900),
+            animation = tween(durationMillis = 800),
             repeatMode = RepeatMode.Reverse
-        ),
-        label = "alpha"
+        )
     )
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(bottom = 20.dp)
+            .padding(bottom = 18.dp)
     ) {
-        // Thumbnail placeholder
         Box(
             modifier = Modifier
                 .fillMaxWidth()
+                .padding(horizontal = 12.dp)
+                .clip(RoundedCornerShape(12.dp))
                 .aspectRatio(16f / 9f)
-                .background(Color.White.copy(alpha = alpha * 0.2f))
+                .background(Color.Gray.copy(alpha = alpha))
         )
-
         Spacer(modifier = Modifier.height(12.dp))
-
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.Top,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(horizontal = 12.dp)
         ) {
-            // Channel Avatar placeholder
             Box(
                 modifier = Modifier
-                    .size(38.dp)
+                    .size(36.dp)
                     .clip(CircleShape)
-                    .background(Color.White.copy(alpha = alpha * 0.2f))
+                    .background(Color.Gray.copy(alpha = alpha))
             )
-
+            Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
-                // Title line 1
                 Box(
                     modifier = Modifier
                         .fillMaxWidth(0.85f)
                         .height(14.dp)
                         .clip(RoundedCornerShape(4.dp))
-                        .background(Color.White.copy(alpha = alpha * 0.2f))
+                        .background(Color.Gray.copy(alpha = alpha))
                 )
                 Spacer(modifier = Modifier.height(6.dp))
-                // Title line 2
                 Box(
                     modifier = Modifier
                         .fillMaxWidth(0.5f)
                         .height(12.dp)
                         .clip(RoundedCornerShape(4.dp))
-                        .background(Color.White.copy(alpha = alpha * 0.15f))
+                        .background(Color.Gray.copy(alpha = alpha))
                 )
             }
         }

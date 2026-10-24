@@ -1,310 +1,291 @@
 package com.reayt.youtube.data
 
+import android.content.Context
 import android.util.Log
-import com.reayt.youtube.model.YouTubeChannel
+import com.reayt.youtube.data.db.AppDatabase
+import com.reayt.youtube.data.db.SubscriptionEntity
+import com.reayt.youtube.data.db.WatchHistoryEntity
+import com.reayt.youtube.model.ResultState
+import com.reayt.youtube.model.YouTubePagedResult
 import com.reayt.youtube.model.YouTubeVideo
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-import java.util.Collections
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.util.concurrent.atomic.AtomicLong
 
-object YouTubeRepository {
+class YouTubeRepository(
+    private val context: Context,
+    private val database: AppDatabase
+) {
 
-    private const val TAG = "YouTubeRepository"
+    private val tag = "YouTubeRepository"
+    private val repoScope = CoroutineScope(Dispatchers.IO)
 
-    val categories = listOf(
-        "All", "Trending", "Gaming", "Music", "Live", "Podcasts", "News", "Technology", "Animation", "Mixes"
-    )
+    // Generation tracking to prevent stale pagination / search races
+    private val feedGeneration = AtomicLong(0)
+    private val searchGeneration = AtomicLong(0)
 
-    private val repositoryScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val feedMutex = Mutex()
+    private val searchMutex = Mutex()
+
     private var feedJob: Job? = null
     private var searchJob: Job? = null
 
-    // ---------------------------------------------------- Feed State
-    private val _selectedCategory = MutableStateFlow("All")
-    val selectedCategory: StateFlow<String> = _selectedCategory.asStateFlow()
-
+    // Feed State
     private val _feedVideos = MutableStateFlow<List<YouTubeVideo>>(emptyList())
     val feedVideos: StateFlow<List<YouTubeVideo>> = _feedVideos.asStateFlow()
 
-    private val _isLoadingFeed = MutableStateFlow(false)
-    val isLoadingFeed: StateFlow<Boolean> = _isLoadingFeed.asStateFlow()
+    private val _isFeedLoading = MutableStateFlow(false)
+    val isFeedLoading: StateFlow<Boolean> = _isFeedLoading.asStateFlow()
 
-    private val _isPaginatingFeed = MutableStateFlow(false)
-    val isPaginatingFeed: StateFlow<Boolean> = _isPaginatingFeed.asStateFlow()
+    private val _isFeedPaginating = MutableStateFlow(false)
+    val isFeedPaginating: StateFlow<Boolean> = _isFeedPaginating.asStateFlow()
 
-    private val _hasMoreFeed = MutableStateFlow(true)
-    val hasMoreFeed: StateFlow<Boolean> = _hasMoreFeed.asStateFlow()
+    private val _hasFeedMore = MutableStateFlow(true)
+    val hasFeedMore: StateFlow<Boolean> = _hasFeedMore.asStateFlow()
 
     private val _feedError = MutableStateFlow<String?>(null)
     val feedError: StateFlow<String?> = _feedError.asStateFlow()
 
     private var feedContinuationToken: String? = null
-    private val seenFeedIds = Collections.synchronizedSet(mutableSetOf<String>())
+    private var currentFeedCategory: String = "All"
 
-    // ---------------------------------------------------- Search State
-    private val _searchQuery = MutableStateFlow("")
-    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+    // Search State
+    private val _searchVideos = MutableStateFlow<List<YouTubeVideo>>(emptyList())
+    val searchVideos: StateFlow<List<YouTubeVideo>> = _searchVideos.asStateFlow()
 
-    private val _searchResults = MutableStateFlow<List<YouTubeVideo>>(emptyList())
-    val searchResults: StateFlow<List<YouTubeVideo>> = _searchResults.asStateFlow()
+    private val _isSearchLoading = MutableStateFlow(false)
+    val isSearchLoading: StateFlow<Boolean> = _isSearchLoading.asStateFlow()
 
-    private val _isSearching = MutableStateFlow(false)
-    val isSearching: StateFlow<Boolean> = _isSearching.asStateFlow()
+    private val _isSearchPaginating = MutableStateFlow(false)
+    val isSearchPaginating: StateFlow<Boolean> = _isSearchPaginating.asStateFlow()
 
-    private val _isPaginatingSearch = MutableStateFlow(false)
-    val isPaginatingSearch: StateFlow<Boolean> = _isPaginatingSearch.asStateFlow()
+    private val _hasSearchMore = MutableStateFlow(true)
+    val hasSearchMore: StateFlow<Boolean> = _hasSearchMore.asStateFlow()
 
-    private val _hasMoreSearch = MutableStateFlow(true)
-    val hasMoreSearch: StateFlow<Boolean> = _hasMoreSearch.asStateFlow()
-
-    private val _hasSearched = MutableStateFlow(false)
-    val hasSearched: StateFlow<Boolean> = _hasSearched.asStateFlow()
+    private val _searchError = MutableStateFlow<String?>(null)
+    val searchError: StateFlow<String?> = _searchError.asStateFlow()
 
     private var searchContinuationToken: String? = null
-    private val seenSearchIds = Collections.synchronizedSet(mutableSetOf<String>())
-
-    // ---------------------------------------------------- User Library
-    private val _historyVideos = MutableStateFlow<List<YouTubeVideo>>(emptyList())
-    val historyVideos: StateFlow<List<YouTubeVideo>> = _historyVideos.asStateFlow()
-
-    private val _likedVideos = MutableStateFlow<List<YouTubeVideo>>(emptyList())
-    val likedVideos: StateFlow<List<YouTubeVideo>> = _likedVideos.asStateFlow()
-
-    private val _watchLaterVideos = MutableStateFlow<List<YouTubeVideo>>(emptyList())
-    val watchLaterVideos: StateFlow<List<YouTubeVideo>> = _watchLaterVideos.asStateFlow()
-
-    private val _searchHistory = MutableStateFlow<List<String>>(
-        listOf("Rick Astley Never Gonna Give You Up", "Me at the zoo", "Official Music Videos 2026", "Tech Reviews")
-    )
-    val searchHistory: StateFlow<List<String>> = _searchHistory.asStateFlow()
-
-    private val _subscriptions = MutableStateFlow<List<YouTubeChannel>>(
-        listOf(
-            YouTubeChannel("c_veritasium", "Veritasium", "https://yt3.ggpht.com/ytc/AIdro_kX4cT=s176-c-k-c0x00ffffff-no-rj", "15.4M subscribers"),
-            YouTubeChannel("c_mkbhd", "Marques Brownlee", "https://yt3.ggpht.com/lkH37D712tiyphnu0Id0D5MwwQ7IRuwgQLVD05iMXlDyj-DuItgnqZXAcxY2WBbvCcEs2P5yE=s176-c-k-c0x00ffffff-no-rj", "18.9M subscribers"),
-            YouTubeChannel("c_fireship", "Fireship", "https://yt3.ggpht.com/ytc/AIdro_mQ1kR=s176-c-k-c0x00ffffff-no-rj", "3.2M subscribers"),
-            YouTubeChannel("c_mrbeast", "MrBeast", "https://yt3.ggpht.com/fxGKYucJAVme-Yzgn葷9=s176-c-k-c0x00ffffff-no-rj", "310M subscribers")
-        )
-    )
-    val subscriptions: StateFlow<List<YouTubeChannel>> = _subscriptions.asStateFlow()
-
-    private val _subscriptionVideos = MutableStateFlow<List<YouTubeVideo>>(emptyList())
-    val subscriptionVideos: StateFlow<List<YouTubeVideo>> = _subscriptionVideos.asStateFlow()
+    private var currentSearchQuery: String = ""
 
     init {
-        loadCategoryVideos("All")
-        loadSubscriptionsFeed()
+        // Cold start: Load cached feed instantly from disk
+        loadCachedFeedFromDisk()
+        loadFeed("All", refresh = true)
     }
 
-    // ---------------------------------------------------- Feed Pagination
+    // ---------------------------------------------------------------- Feed Operations
 
-    fun selectCategory(cat: String) {
-        if (_selectedCategory.value == cat && _feedVideos.value.isNotEmpty()) return
-        _selectedCategory.value = cat
-        loadCategoryVideos(cat)
-    }
-
-    fun refreshFeed() {
-        loadCategoryVideos(_selectedCategory.value, isRefresh = true)
-    }
-
-    fun loadCategoryVideos(category: String, isRefresh: Boolean = false) {
+    fun loadFeed(category: String, refresh: Boolean = false) {
+        val gen = feedGeneration.incrementAndGet()
         feedJob?.cancel()
-        feedJob = repositoryScope.launch {
-            _isLoadingFeed.value = true
-            _feedError.value = null
-            if (!isRefresh) {
-                _feedVideos.value = emptyList()
-            }
-            feedContinuationToken = null
-            seenFeedIds.clear()
 
-            try {
-                val result = YouTubeClient.fetchFeedPaged(category)
-                val uniqueVideos = result.videos.filter { seenFeedIds.add(it.id) }
-                _feedVideos.value = uniqueVideos
-                feedContinuationToken = result.continuationToken
-                _hasMoreFeed.value = (result.continuationToken != null)
-            } catch (e: Throwable) {
-                Log.e(TAG, "loadCategoryVideos error: ${e.message}", e)
-                _feedError.value = e.localizedMessage ?: "Failed to load feed"
-            } finally {
-                _isLoadingFeed.value = false
+        feedJob = repoScope.launch {
+            if (refresh || category != currentFeedCategory) {
+                currentFeedCategory = category
+                feedContinuationToken = null
+                _hasFeedMore.value = true
+                _feedError.value = null
+                _isFeedLoading.value = true
+                if (refresh) {
+                    _feedVideos.value = emptyList()
+                }
+            } else if (_isFeedPaginating.value || !_hasFeedMore.value) {
+                return@launch
+            } else {
+                _isFeedPaginating.value = true
+            }
+
+            val result = YouTubeClient.fetchFeedPaged(category, feedContinuationToken)
+
+            if (gen != feedGeneration.get()) {
+                // Discard stale generation results
+                return@launch
+            }
+
+            feedMutex.withLock {
+                when (result) {
+                    is ResultState.Success -> {
+                        val paged = result.data
+                        feedContinuationToken = paged.continuationToken
+                        _hasFeedMore.value = !feedContinuationToken.isNullOrBlank()
+
+                        val currentList = _feedVideos.value
+                        val existingIds = currentList.map { it.id }.toSet()
+                        val newUnique = paged.videos.filter { it.id !in existingIds }
+
+                        val updated = if (feedContinuationToken == null && currentList.isEmpty()) {
+                            paged.videos
+                        } else {
+                            currentList + newUnique
+                        }
+                        _feedVideos.value = updated
+                        _feedError.value = null
+
+                        // Cache feed for fast cold start
+                        if (category.equals("All", ignoreCase = true)) {
+                            saveFeedCacheToDisk(updated.take(30))
+                        }
+                    }
+                    is ResultState.NetworkError -> {
+                        _feedError.value = result.message
+                    }
+                    is ResultState.ParseError -> {
+                        _feedError.value = result.message
+                    }
+                    is ResultState.Blocked -> {
+                        _feedError.value = result.message
+                    }
+                }
+                _isFeedLoading.value = false
+                _isFeedPaginating.value = false
             }
         }
     }
 
     fun loadMoreFeed() {
-        if (_isLoadingFeed.value || _isPaginatingFeed.value || !_hasMoreFeed.value) return
-        val token = feedContinuationToken ?: return
-
-        repositoryScope.launch {
-            _isPaginatingFeed.value = true
-            try {
-                val result = YouTubeClient.fetchFeedPaged(_selectedCategory.value, token)
-                val newVideos = result.videos.filter { seenFeedIds.add(it.id) }
-                if (newVideos.isNotEmpty()) {
-                    _feedVideos.value = _feedVideos.value + newVideos
-                }
-                feedContinuationToken = result.continuationToken
-                _hasMoreFeed.value = (result.continuationToken != null)
-            } catch (e: Throwable) {
-                Log.w(TAG, "loadMoreFeed pagination warning: ${e.message}")
-            } finally {
-                _isPaginatingFeed.value = false
-            }
+        if (!_isFeedLoading.value && !_isFeedPaginating.value && _hasFeedMore.value && !feedContinuationToken.isNullOrBlank()) {
+            loadFeed(currentFeedCategory, refresh = false)
         }
     }
 
-    // ---------------------------------------------------- Search Pagination
+    // ---------------------------------------------------------------- Search Operations
 
-    fun executeSearch(query: String) {
-        val cleanQuery = query.trim()
-        if (cleanQuery.isBlank()) return
+    fun search(query: String, refresh: Boolean = true) {
+        val q = query.trim()
+        if (q.isBlank()) {
+            _searchVideos.value = emptyList()
+            _searchError.value = null
+            _isSearchLoading.value = false
+            return
+        }
 
+        val gen = searchGeneration.incrementAndGet()
         searchJob?.cancel()
-        searchJob = repositoryScope.launch {
-            _searchQuery.value = cleanQuery
-            _hasSearched.value = true
-            _isSearching.value = true
-            _searchResults.value = emptyList()
-            searchContinuationToken = null
-            seenSearchIds.clear()
-            addSearchQuery(cleanQuery)
 
-            try {
-                val result = YouTubeClient.searchVideosPaged(cleanQuery)
-                val unique = result.videos.filter { seenSearchIds.add(it.id) }
-                _searchResults.value = unique
-                searchContinuationToken = result.continuationToken
-                _hasMoreSearch.value = (result.continuationToken != null)
-            } catch (e: Throwable) {
-                Log.e(TAG, "executeSearch error: ${e.message}", e)
-            } finally {
-                _isSearching.value = false
+        searchJob = repoScope.launch {
+            if (refresh || q != currentSearchQuery) {
+                currentSearchQuery = q
+                searchContinuationToken = null
+                _hasSearchMore.value = true
+                _searchError.value = null
+                _isSearchLoading.value = true
+                _searchVideos.value = emptyList()
+            } else if (_isSearchPaginating.value || !_hasSearchMore.value) {
+                return@launch
+            } else {
+                _isSearchPaginating.value = true
+            }
+
+            val result = YouTubeClient.searchVideosPaged(q, searchContinuationToken)
+
+            if (gen != searchGeneration.get()) {
+                return@launch
+            }
+
+            searchMutex.withLock {
+                when (result) {
+                    is ResultState.Success -> {
+                        val paged = result.data
+                        searchContinuationToken = paged.continuationToken
+                        _hasSearchMore.value = !searchContinuationToken.isNullOrBlank()
+
+                        val currentList = _searchVideos.value
+                        val existingIds = currentList.map { it.id }.toSet()
+                        val newUnique = paged.videos.filter { it.id !in existingIds }
+
+                        _searchVideos.value = if (searchContinuationToken == null && currentList.isEmpty()) {
+                            paged.videos
+                        } else {
+                            currentList + newUnique
+                        }
+                        _searchError.value = null
+                    }
+                    is ResultState.NetworkError -> {
+                        _searchError.value = result.message
+                    }
+                    is ResultState.ParseError -> {
+                        _searchError.value = result.message
+                    }
+                    is ResultState.Blocked -> {
+                        _searchError.value = result.message
+                    }
+                }
+                _isSearchLoading.value = false
+                _isSearchPaginating.value = false
             }
         }
     }
 
     fun loadMoreSearch() {
-        if (_isSearching.value || _isPaginatingSearch.value || !_hasMoreSearch.value) return
-        val token = searchContinuationToken ?: return
+        if (!_isSearchLoading.value && !_isSearchPaginating.value && _hasSearchMore.value && !searchContinuationToken.isNullOrBlank()) {
+            search(currentSearchQuery, refresh = false)
+        }
+    }
 
-        repositoryScope.launch {
-            _isPaginatingSearch.value = true
-            try {
-                val result = YouTubeClient.searchVideosPaged("", token)
-                val newVideos = result.videos.filter { seenSearchIds.add(it.id) }
-                if (newVideos.isNotEmpty()) {
-                    _searchResults.value = _searchResults.value + newVideos
+    // ---------------------------------------------------------------- Disk Cache
+
+    private fun saveFeedCacheToDisk(videos: List<YouTubeVideo>) {
+        try {
+            val file = File(context.cacheDir, "cached_feed.json")
+            val arr = JSONArray()
+            for (v in videos) {
+                val o = JSONObject().apply {
+                    put("id", v.id)
+                    put("title", v.title)
+                    put("channelTitle", v.channelTitle)
+                    put("channelId", v.channelId)
+                    put("channelAvatarUrl", v.channelAvatarUrl)
+                    put("thumbnailUrl", v.thumbnailUrl)
+                    put("durationText", v.durationText)
+                    put("durationMs", v.durationMs)
+                    put("viewCountText", v.viewCountText)
+                    put("publishedTimeText", v.publishedTimeText)
+                    put("description", v.description)
                 }
-                searchContinuationToken = result.continuationToken
-                _hasMoreSearch.value = (result.continuationToken != null)
-            } catch (e: Throwable) {
-                Log.w(TAG, "loadMoreSearch pagination error: ${e.message}")
-            } finally {
-                _isPaginatingSearch.value = false
+                arr.put(o)
             }
-        }
+            file.writeText(arr.toString())
+        } catch (_: Throwable) {}
     }
 
-    fun clearSearchResults() {
-        _searchResults.value = emptyList()
-        _hasSearched.value = false
-        searchContinuationToken = null
-        seenSearchIds.clear()
-    }
-
-    // ---------------------------------------------------- Subscriptions & Library
-
-    fun loadSubscriptionsFeed() {
-        repositoryScope.launch {
-            try {
-                val channels = _subscriptions.value
-                val combined = mutableListOf<YouTubeVideo>()
-                for (ch in channels.take(4)) {
-                    val list = YouTubeClient.fetchChannelVideos(ch.title)
-                    combined.addAll(list.take(4))
+    private fun loadCachedFeedFromDisk() {
+        try {
+            val file = File(context.cacheDir, "cached_feed.json")
+            if (file.exists()) {
+                val text = file.readText()
+                val arr = JSONArray(text)
+                val list = mutableListOf<YouTubeVideo>()
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    list.add(
+                        YouTubeVideo(
+                            id = o.optString("id"),
+                            title = o.optString("title"),
+                            channelTitle = o.optString("channelTitle"),
+                            channelId = o.optString("channelId"),
+                            channelAvatarUrl = o.optString("channelAvatarUrl"),
+                            thumbnailUrl = o.optString("thumbnailUrl"),
+                            durationText = o.optString("durationText"),
+                            durationMs = o.optLong("durationMs"),
+                            viewCountText = o.optString("viewCountText"),
+                            publishedTimeText = o.optString("publishedTimeText"),
+                            description = o.optString("description")
+                        )
+                    )
                 }
-                if (combined.isNotEmpty()) {
-                    _subscriptionVideos.value = combined
+                if (list.isNotEmpty() && _feedVideos.value.isEmpty()) {
+                    _feedVideos.value = list
                 }
-            } catch (e: Throwable) {
-                Log.e(TAG, "loadSubscriptionsFeed error: ${e.message}")
             }
-        }
-    }
-
-    fun addSearchQuery(query: String) {
-        if (query.isBlank()) return
-        val current = _searchHistory.value.toMutableList()
-        current.removeAll { it.equals(query.trim(), ignoreCase = true) }
-        current.add(0, query.trim())
-        _searchHistory.value = current.take(20)
-    }
-
-    fun removeSearchQuery(query: String) {
-        val current = _searchHistory.value.toMutableList()
-        current.removeAll { it.equals(query.trim(), ignoreCase = true) }
-        _searchHistory.value = current
-    }
-
-    fun clearSearchHistory() {
-        _searchHistory.value = emptyList()
-    }
-
-    fun recordHistory(video: YouTubeVideo) {
-        val current = _historyVideos.value.toMutableList()
-        current.removeAll { it.id == video.id }
-        current.add(0, video)
-        _historyVideos.value = current.take(100)
-    }
-
-    fun clearHistory() {
-        _historyVideos.value = emptyList()
-    }
-
-    fun toggleLike(video: YouTubeVideo) {
-        val current = _likedVideos.value.toMutableList()
-        val exists = current.any { it.id == video.id }
-        if (exists) {
-            current.removeAll { it.id == video.id }
-        } else {
-            current.add(0, video.copy(isLiked = true))
-        }
-        _likedVideos.value = current
-    }
-
-    fun isVideoLiked(videoId: String): Boolean {
-        return _likedVideos.value.any { it.id == videoId }
-    }
-
-    fun toggleWatchLater(video: YouTubeVideo) {
-        val current = _watchLaterVideos.value.toMutableList()
-        val exists = current.any { it.id == video.id }
-        if (exists) current.removeAll { it.id == video.id }
-        else current.add(0, video)
-        _watchLaterVideos.value = current
-    }
-
-    fun toggleSubscribe(channel: YouTubeChannel) {
-        val current = _subscriptions.value.toMutableList()
-        val index = current.indexOfFirst { it.title.equals(channel.title, ignoreCase = true) }
-        if (index >= 0) {
-            current.removeAt(index)
-        } else {
-            current.add(0, channel.copy(isSubscribed = true))
-        }
-        _subscriptions.value = current
-    }
-
-    fun isSubscribed(channelTitle: String): Boolean {
-        return _subscriptions.value.any { it.title.equals(channelTitle, ignoreCase = true) }
+        } catch (_: Throwable) {}
     }
 }

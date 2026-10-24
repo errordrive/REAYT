@@ -1,11 +1,7 @@
 package com.reayt.youtube.data
 
 import android.util.Log
-import com.reayt.youtube.model.StreamFormat
-import com.reayt.youtube.model.YouTubeComment
-import com.reayt.youtube.model.YouTubePagedResult
-import com.reayt.youtube.model.YouTubeStreamInfo
-import com.reayt.youtube.model.YouTubeVideo
+import com.reayt.youtube.model.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -13,7 +9,9 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
 import java.net.URLEncoder
+import java.util.Locale
 
 object YouTubeClient {
 
@@ -50,9 +48,23 @@ object YouTubeClient {
         }
     )
 
-    /**
-     * Refreshes or retrieves valid visitorData from YouTube visitor_id endpoint.
-     */
+    private val VISION_OS_CONTEXT: JSONObject
+        get() = JSONObject().put(
+            "client",
+            JSONObject().apply {
+                put("clientName", "VISIONOS")
+                put("clientVersion", "1.02")
+                put("deviceMake", "Apple")
+                put("deviceModel", "RealityDevice17,1")
+                put("userAgent", NetworkModule.UA_VISIONOS)
+                put("osName", "visionOS")
+                put("osVersion", "26.5.23O471")
+                put("hl", "en")
+                put("gl", "US")
+                put("visitorData", cachedVisitorData)
+            }
+        )
+
     private suspend fun fetchVisitorData(): String = withContext(Dispatchers.IO) {
         try {
             val body = JSONObject().put("context", WEB_CLIENT_CONTEXT)
@@ -63,7 +75,7 @@ object YouTubeClient {
                 .header("Origin", ORIGIN_YT)
                 .build()
 
-            NetworkModule.apiClient.newCall(req).execute().use { resp ->
+            NetworkModule.apiClient.newCall(req).await().use { resp ->
                 if (resp.isSuccessful) {
                     val json = JSONObject(resp.body?.string().orEmpty())
                     val token = json.optJSONObject("responseContext")?.optString("visitorData")
@@ -80,14 +92,14 @@ object YouTubeClient {
     }
 
     /**
-     * Searches YouTube for videos with continuation pagination.
+     * Searches YouTube with continuation pagination.
      */
     suspend fun searchVideosPaged(
         query: String,
         continuationToken: String? = null
-    ): YouTubePagedResult = withContext(Dispatchers.IO) {
+    ): ResultState<YouTubePagedResult> = withContext(Dispatchers.IO) {
         if (query.isBlank() && continuationToken.isNullOrBlank()) {
-            return@withContext YouTubePagedResult(emptyList(), null)
+            return@withContext ResultState.Success(YouTubePagedResult(emptyList(), null))
         }
         try {
             val body = JSONObject().put("context", WEB_CLIENT_CONTEXT)
@@ -105,37 +117,41 @@ object YouTubeClient {
                 .header("Referer", "$ORIGIN_YT/")
                 .build()
 
-            NetworkModule.apiClient.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return@withContext YouTubePagedResult(emptyList(), null)
-                val json = JSONObject(resp.body?.string().orEmpty())
+            NetworkModule.apiClient.newCall(req).await().use { resp ->
+                if (resp.code == 429) {
+                    return@withContext ResultState.Blocked("Too many requests from YouTube. Please try again in a few moments.")
+                }
+                if (!resp.isSuccessful) {
+                    return@withContext ResultState.NetworkError("Server responded with HTTP ${resp.code}")
+                }
+                val raw = resp.body?.string().orEmpty()
+                if (raw.isBlank()) {
+                    return@withContext ResultState.ParseError("Empty response from search")
+                }
+                val json = JSONObject(raw)
                 val videos = parseVideoRenderers(json)
                 val nextToken = extractContinuationToken(json)
-                YouTubePagedResult(videos, nextToken)
+                ResultState.Success(YouTubePagedResult(videos, nextToken))
             }
+        } catch (e: IOException) {
+            ResultState.NetworkError("Network connection failed. Please check your internet.", e)
         } catch (e: Throwable) {
             Log.e(TAG, "searchVideosPaged error: ${e.message}", e)
-            YouTubePagedResult(emptyList(), null)
+            ResultState.ParseError("Error reading search results: ${e.message}", e)
         }
     }
 
     /**
-     * Searches YouTube for videos matching [query].
-     */
-    suspend fun searchVideos(query: String): List<YouTubeVideo> = withContext(Dispatchers.IO) {
-        searchVideosPaged(query).videos
-    }
-
-    /**
-     * Fetches video feed corresponding to a category chip with continuation pagination.
+     * Fetches video feed for a category chip with continuation pagination.
      */
     suspend fun fetchFeedPaged(
         category: String,
         continuationToken: String? = null
-    ): YouTubePagedResult = withContext(Dispatchers.IO) {
+    ): ResultState<YouTubePagedResult> = withContext(Dispatchers.IO) {
         if (!continuationToken.isNullOrBlank()) {
             return@withContext searchVideosPaged("", continuationToken)
         }
-        val query = when (category.lowercase()) {
+        val query = when (category.lowercase(Locale.ROOT)) {
             "all" -> "trending popular videos"
             "trending" -> "trending top global viral"
             "gaming" -> "popular gaming highlights"
@@ -152,44 +168,7 @@ object YouTubeClient {
     }
 
     /**
-     * Fetches video feed corresponding to a category chip.
-     */
-    suspend fun fetchFeed(category: String): List<YouTubeVideo> = withContext(Dispatchers.IO) {
-        fetchFeedPaged(category).videos
-    }
-
-    /**
-     * Fetches videos for a subscribed channel with continuation pagination.
-     */
-    suspend fun fetchChannelVideosPaged(
-        channelTitle: String,
-        continuationToken: String? = null
-    ): YouTubePagedResult = withContext(Dispatchers.IO) {
-        if (!continuationToken.isNullOrBlank()) {
-            searchVideosPaged("", continuationToken)
-        } else {
-            searchVideosPaged("$channelTitle official videos")
-        }
-    }
-
-    /**
-     * Fetches videos for a subscribed channel.
-     */
-    suspend fun fetchChannelVideos(channelTitle: String): List<YouTubeVideo> = withContext(Dispatchers.IO) {
-        fetchChannelVideosPaged(channelTitle).videos
-    }
-
-    /**
-     * Fetches up-next recommendations for a given video.
-     */
-    suspend fun fetchRelatedVideos(videoId: String, title: String): List<YouTubeVideo> = withContext(Dispatchers.IO) {
-        val clean = title.replace(Regex("[\\[\\](){}|#]"), " ").trim()
-        val query = clean.take(45)
-        searchVideos(query).filter { it.id != videoId }
-    }
-
-    /**
-     * Retrieves autocomplete search suggestions as user types.
+     * Fetches autocomplete search suggestions.
      */
     suspend fun getSearchSuggestions(query: String): List<String> = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext emptyList()
@@ -201,7 +180,7 @@ object YouTubeClient {
                 .header("User-Agent", NetworkModule.UA_WEB)
                 .build()
 
-            NetworkModule.apiClient.newCall(req).execute().use { resp ->
+            NetworkModule.apiClient.newCall(req).await().use { resp ->
                 if (!resp.isSuccessful) return@withContext emptyList()
                 val raw = resp.body?.string().orEmpty()
                 val arr = JSONArray(raw)
@@ -218,48 +197,56 @@ object YouTubeClient {
     }
 
     /**
-     * Resolves direct video stream URLs with multi-client fallback:
-     * 1. VisionOS InnerTube client (provides full HLS master playlist with audio + adaptive video)
-     * 2. Android VR InnerTube client (provides muxed itag 18/22 progressive + direct streams)
+     * Resolves direct video stream URLs with multi-client fallback chain:
+     * 1. VisionOS InnerTube player client
+     * 2. Android VR InnerTube player client
+     * 3. VisionOS retry with fresh visitor data
      */
-    suspend fun resolveVideoStream(videoId: String): YouTubeStreamInfo? = withContext(Dispatchers.IO) {
-        if (videoId.isBlank()) return@withContext null
-
-        // 1. Try VisionOS InnerTube Player API
-        val visionResult = resolveViaVisionOS(videoId)
-        if (visionResult != null && (visionResult.hlsUrl != null || visionResult.directVideoUrl != null)) {
-            return@withContext visionResult
+    suspend fun resolveVideoStream(videoId: String): ResultState<YouTubeStreamInfo> = withContext(Dispatchers.IO) {
+        if (videoId.isBlank()) {
+            return@withContext ResultState.ParseError("Invalid video ID")
         }
 
-        // 2. Fallback to Android VR client
-        val vrResult = resolveViaAndroidVR(videoId)
-        if (vrResult != null && (vrResult.hlsUrl != null || vrResult.directVideoUrl != null)) {
-            return@withContext vrResult
+        var lastError: String? = null
+
+        // 1. Try VisionOS
+        try {
+            val res = resolveViaVisionOS(videoId)
+            if (res != null && (res.hlsUrl != null || res.directVideoUrl != null)) {
+                return@withContext ResultState.Success(res)
+            }
+        } catch (e: Exception) {
+            lastError = e.message
         }
 
-        // 3. Retry VisionOS after refreshing visitor token
-        fetchVisitorData()
-        resolveViaVisionOS(videoId)
+        // 2. Try Android VR
+        try {
+            val vrRes = resolveViaAndroidVR(videoId)
+            if (vrRes != null && (vrRes.hlsUrl != null || vrRes.directVideoUrl != null)) {
+                return@withContext ResultState.Success(vrRes)
+            }
+        } catch (e: Exception) {
+            lastError = e.message
+        }
+
+        // 3. Retry VisionOS after refreshing visitor data
+        try {
+            fetchVisitorData()
+            val retryRes = resolveViaVisionOS(videoId)
+            if (retryRes != null && (retryRes.hlsUrl != null || retryRes.directVideoUrl != null)) {
+                return@withContext ResultState.Success(retryRes)
+            }
+        } catch (e: Exception) {
+            lastError = e.message
+        }
+
+        ResultState.NetworkError(lastError ?: "Unable to resolve stream formats for video $videoId")
     }
 
     private suspend fun resolveViaVisionOS(videoId: String): YouTubeStreamInfo? = withContext(Dispatchers.IO) {
         try {
-            val visitor = cachedVisitorData
-            val clientObj = JSONObject().apply {
-                put("clientName", "VISIONOS")
-                put("clientVersion", "1.02")
-                put("deviceMake", "Apple")
-                put("deviceModel", "RealityDevice17,1")
-                put("userAgent", NetworkModule.UA_VISIONOS)
-                put("osName", "visionOS")
-                put("osVersion", "26.5.23O471")
-                put("hl", "en")
-                put("gl", "US")
-                put("visitorData", visitor)
-            }
-
             val body = JSONObject()
-                .put("context", JSONObject().put("client", clientObj))
+                .put("context", VISION_OS_CONTEXT)
                 .put("videoId", videoId)
                 .put("playbackContext", JSONObject().put("contentPlaybackContext", JSONObject().put("signatureTimestamp", 20746)))
                 .put("contentCheckOk", true)
@@ -275,14 +262,18 @@ object YouTubeClient {
                 .header("Referer", "$ORIGIN_YT/")
                 .build()
 
-            NetworkModule.apiClient.newCall(req).execute().use { resp ->
+            NetworkModule.apiClient.newCall(req).await().use { resp ->
                 if (!resp.isSuccessful) return@withContext null
                 val json = JSONObject(resp.body?.string().orEmpty())
                 val playability = json.optJSONObject("playabilityStatus")?.optString("status")
                 if (playability != "OK") return@withContext null
 
                 val streamingData = json.optJSONObject("streamingData") ?: return@withContext null
-                parseStreamingData(streamingData)
+                val streamInfo = parseStreamingData(videoId, streamingData, "VISIONOS", NetworkModule.UA_VISIONOS)
+
+                // Parse captions
+                val captionsList = parseCaptions(json.optJSONObject("captions"))
+                streamInfo?.copy(captions = captionsList)
             }
         } catch (e: Throwable) {
             Log.w(TAG, "resolveViaVisionOS error for $videoId: ${e.message}")
@@ -301,19 +292,19 @@ object YouTubeClient {
             val req = Request.Builder()
                 .url("$YT_BASE/player?prettyPrint=false")
                 .post(body.toString().toRequestBody(JSON))
-                .header("User-Agent", "Mozilla/5.0 (Linux; Android 12; Quest 3) AppleWebKit/537.36")
+                .header("User-Agent", NetworkModule.UA_ANDROID_VR)
                 .header("Origin", ORIGIN_YT)
                 .header("Referer", "$ORIGIN_YT/")
                 .build()
 
-            NetworkModule.apiClient.newCall(req).execute().use { resp ->
+            NetworkModule.apiClient.newCall(req).await().use { resp ->
                 if (!resp.isSuccessful) return@withContext null
                 val json = JSONObject(resp.body?.string().orEmpty())
                 val playability = json.optJSONObject("playabilityStatus")?.optString("status")
                 if (playability != "OK") return@withContext null
 
                 val streamingData = json.optJSONObject("streamingData") ?: return@withContext null
-                parseStreamingData(streamingData)
+                parseStreamingData(videoId, streamingData, "ANDROID_VR", NetworkModule.UA_ANDROID_VR)
             }
         } catch (e: Throwable) {
             Log.w(TAG, "resolveViaAndroidVR error for $videoId: ${e.message}")
@@ -321,8 +312,36 @@ object YouTubeClient {
         }
     }
 
-    private fun parseStreamingData(streamingData: JSONObject): YouTubeStreamInfo? {
+    private fun parseCaptions(captionsObj: JSONObject?): List<CaptionTrack> {
+        val tracks = mutableListOf<CaptionTrack>()
+        val trackList = captionsObj
+            ?.optJSONObject("playerCaptionsTracklistRenderer")
+            ?.optJSONArray("captionTracks") ?: return emptyList()
+
+        for (i in 0 until trackList.length()) {
+            val t = trackList.optJSONObject(i) ?: continue
+            val baseUrl = t.optString("baseUrl")
+            if (baseUrl.isBlank()) continue
+            val name = t.optJSONObject("name")?.optString("simpleText")
+                ?: t.optJSONObject("name")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
+                ?: "Captions"
+            val langCode = t.optString("languageCode", "en")
+            val vssId = t.optString("vssId", "")
+            tracks.add(CaptionTrack(languageCode = langCode, name = name, baseUrl = baseUrl, vssId = vssId))
+        }
+        return tracks
+    }
+
+    private fun parseStreamingData(
+        videoId: String,
+        streamingData: JSONObject,
+        clientName: String,
+        userAgent: String
+    ): YouTubeStreamInfo? {
         val hlsUrl = streamingData.optString("hlsManifestUrl").takeIf { it.isNotBlank() }
+        val expiresInSeconds = streamingData.optLong("expiresInSeconds", 21600L)
+        val expireTimeMs = System.currentTimeMillis() + (expiresInSeconds * 1000L)
+
         val progressive = streamingData.optJSONArray("formats")
         val adaptive = streamingData.optJSONArray("adaptiveFormats")
 
@@ -344,9 +363,21 @@ object YouTubeClient {
                 val itag = f.optInt("itag")
                 val mime = f.optString("mimeType")
                 val quality = f.optString("qualityLabel", "Standard")
+                val bitrate = f.optLong("bitrate", 0L)
+                val width = f.optInt("width", 0)
+                val height = f.optInt("height", 0)
 
                 allFormats.add(
-                    StreamFormat(itag = itag, qualityLabel = quality, mimeType = mime, url = url, isVideo = true)
+                    StreamFormat(
+                        itag = itag,
+                        qualityLabel = quality,
+                        mimeType = mime,
+                        url = url,
+                        isVideo = true,
+                        bitrate = bitrate,
+                        width = width,
+                        height = height
+                    )
                 )
 
                 if (muxedUrl == null || quality.contains("720") || quality.contains("1080")) {
@@ -367,9 +398,28 @@ object YouTubeClient {
                 val mime = f.optString("mimeType")
                 val isVideo = mime.startsWith("video/")
                 val quality = f.optString("qualityLabel", f.optString("audioQuality", "Standard"))
+                val bitrate = f.optLong("bitrate", 0L)
+                val width = f.optInt("width", 0)
+                val height = f.optInt("height", 0)
+
+                val initRangeObj = f.optJSONObject("initRange")
+                val initRange = if (initRangeObj != null) "${initRangeObj.optString("start")}-${initRangeObj.optString("end")}" else null
+                val indexRangeObj = f.optJSONObject("indexRange")
+                val indexRange = if (indexRangeObj != null) "${indexRangeObj.optString("start")}-${indexRangeObj.optString("end")}" else null
 
                 allFormats.add(
-                    StreamFormat(itag = itag, qualityLabel = quality, mimeType = mime, url = url, isVideo = isVideo)
+                    StreamFormat(
+                        itag = itag,
+                        qualityLabel = quality,
+                        mimeType = mime,
+                        url = url,
+                        isVideo = isVideo,
+                        bitrate = bitrate,
+                        width = width,
+                        height = height,
+                        initRange = initRange,
+                        indexRange = indexRange
+                    )
                 )
 
                 if (isVideo) {
@@ -396,30 +446,276 @@ object YouTubeClient {
         }
 
         return YouTubeStreamInfo(
+            videoId = videoId,
             hlsUrl = hlsUrl,
             directVideoUrl = muxedUrl ?: bestVideoUrl,
             audioUrl = bestAudioUrl,
             qualityLabel = bestQuality,
+            clientName = clientName,
+            userAgent = userAgent,
+            headers = mapOf("User-Agent" to userAgent, "Origin" to ORIGIN_YT),
             videoMimeType = muxedMime ?: bestVideoMime,
             audioMimeType = bestAudioMime,
-            formats = allFormats
+            formats = allFormats,
+            expireTimestampMs = expireTimeMs
         )
     }
 
     /**
-     * Generates realistic comments for the video comment sheet.
+     * Fetches real video details, description, up-next videos, and comments token via /next.
      */
-    fun getSampleComments(videoId: String, title: String): List<YouTubeComment> {
-        return listOf(
-            YouTubeComment("c1", "Alex Rivera", "", "The video quality and audio clarity on this stream is unmatched! Amazing experience.", "1 day ago", "1.4K"),
-            YouTubeComment("c2", "Devon Miles", "", "I've been waiting for this topic for weeks. So glad someone covered it in depth.", "2 days ago", "842"),
-            YouTubeComment("c3", "Tech Explorer", "", "The explanation at 04:15 made everything click for me. Subscribed!", "3 days ago", "531"),
-            YouTubeComment("c4", "Sara Connor", "", "Watching this in full 1080p HLS, super smooth streaming with zero buffering.", "4 days ago", "310"),
-            YouTubeComment("c5", "Liam Chen", "", "Anyone else watching this in 2026? Such an iconic upload.", "5 days ago", "198")
-        )
+    suspend fun fetchNextAndDetails(videoId: String): ResultState<Pair<YouTubeVideo, List<YouTubeVideo>>> = withContext(Dispatchers.IO) {
+        if (videoId.isBlank()) return@withContext ResultState.ParseError("Missing video ID")
+        try {
+            val body = JSONObject()
+                .put("context", WEB_CLIENT_CONTEXT)
+                .put("videoId", videoId)
+
+            val req = Request.Builder()
+                .url("$YT_BASE/next?prettyPrint=false")
+                .post(body.toString().toRequestBody(JSON))
+                .header("User-Agent", NetworkModule.UA_WEB)
+                .header("Origin", ORIGIN_YT)
+                .header("Referer", "$ORIGIN_YT/")
+                .build()
+
+            NetworkModule.apiClient.newCall(req).await().use { resp ->
+                if (!resp.isSuccessful) {
+                    return@withContext ResultState.NetworkError("Next call returned HTTP ${resp.code}")
+                }
+                val raw = resp.body?.string().orEmpty()
+                val json = JSONObject(raw)
+
+                // Parse video metadata
+                var title = ""
+                var channelTitle = ""
+                var channelId = ""
+                var channelAvatar = ""
+                var viewCount = ""
+                var publishedTime = ""
+                var description = ""
+                var subscriberCount = ""
+                var likesCount = ""
+                var isLive = false
+
+                // Try to extract from playerOverlays or currentVideoEndpoint
+                val contents = json.optJSONObject("contents")
+                    ?.optJSONObject("twoColumnWatchNextResults")
+                    ?.optJSONObject("results")
+                    ?.optJSONObject("results")
+                    ?.optJSONArray("contents")
+
+                if (contents != null) {
+                    for (i in 0 until contents.length()) {
+                        val c = contents.optJSONObject(i) ?: continue
+                        if (c.has("videoPrimaryInfoRenderer")) {
+                            val vpi = c.getJSONObject("videoPrimaryInfoRenderer")
+                            title = joinRuns(vpi.optJSONObject("title"))
+                            viewCount = vpi.optJSONObject("viewCount")?.optJSONObject("videoViewCountRenderer")?.optString("shortViewCount")
+                                ?: joinRuns(vpi.optJSONObject("viewCount")?.optJSONObject("videoViewCountRenderer")?.optJSONObject("viewCount"))
+                            publishedTime = joinRuns(vpi.optJSONObject("dateText"))
+                        }
+                        if (c.has("videoSecondaryInfoRenderer")) {
+                            val vsi = c.getJSONObject("videoSecondaryInfoRenderer")
+                            val owner = vsi.optJSONObject("owner")?.optJSONObject("videoOwnerRenderer")
+                            if (owner != null) {
+                                channelTitle = joinRuns(owner.optJSONObject("title"))
+                                channelId = owner.optJSONObject("navigationEndpoint")
+                                    ?.optJSONObject("browseEndpoint")?.optString("browseId").orEmpty()
+                                subscriberCount = joinRuns(owner.optJSONObject("subscriberCountText"))
+                                val thumbs = owner.optJSONObject("thumbnail")?.optJSONArray("thumbnails")
+                                if (thumbs != null && thumbs.length() > 0) {
+                                    channelAvatar = thumbs.getJSONObject(thumbs.length() - 1).optString("url")
+                                }
+                            }
+                            description = joinRuns(vsi.optJSONObject("description"))
+                        }
+                    }
+                }
+
+                val primaryVideo = YouTubeVideo(
+                    id = videoId,
+                    title = title.ifBlank { "YouTube Video" },
+                    channelTitle = channelTitle,
+                    channelId = channelId,
+                    channelAvatarUrl = channelAvatar,
+                    thumbnailUrl = "https://i.ytimg.com/vi/$videoId/hqdefault.jpg",
+                    viewCountText = viewCount,
+                    publishedTimeText = publishedTime,
+                    description = description,
+                    subscriberCount = subscriberCount,
+                    likesCount = likesCount,
+                    isLive = isLive
+                )
+
+                // Parse related videos from watch-next results
+                val relatedVideos = parseVideoRenderers(json).filter { it.id != videoId }
+
+                ResultState.Success(Pair(primaryVideo, relatedVideos))
+            }
+        } catch (e: IOException) {
+            ResultState.NetworkError("Network error loading video details", e)
+        } catch (e: Throwable) {
+            ResultState.ParseError("Parsing error: ${e.message}", e)
+        }
     }
 
-    // ---------------------------------------------------------------- Internals
+    /**
+     * Fetches comments for a video using a continuation token from /next.
+     */
+    suspend fun fetchComments(continuationToken: String): ResultState<CommentsPagedResult> = withContext(Dispatchers.IO) {
+        if (continuationToken.isBlank()) {
+            return@withContext ResultState.Success(CommentsPagedResult(emptyList(), null))
+        }
+        try {
+            val body = JSONObject()
+                .put("context", WEB_CLIENT_CONTEXT)
+                .put("continuation", continuationToken)
+
+            val req = Request.Builder()
+                .url("$YT_BASE/next?prettyPrint=false")
+                .post(body.toString().toRequestBody(JSON))
+                .header("User-Agent", NetworkModule.UA_WEB)
+                .header("Origin", ORIGIN_YT)
+                .build()
+
+            NetworkModule.apiClient.newCall(req).await().use { resp ->
+                if (!resp.isSuccessful) {
+                    return@withContext ResultState.NetworkError("Comments request failed with HTTP ${resp.code}")
+                }
+                val json = JSONObject(resp.body?.string().orEmpty())
+                val comments = mutableListOf<YouTubeComment>()
+
+                fun extractComments(node: Any) {
+                    when (node) {
+                        is JSONObject -> {
+                            if (node.has("commentRenderer")) {
+                                val cr = node.getJSONObject("commentRenderer")
+                                val id = cr.optString("commentId")
+                                val author = cr.optJSONObject("authorText")?.optString("simpleText")
+                                    ?: joinRuns(cr.optJSONObject("authorText"))
+                                val text = joinRuns(cr.optJSONObject("contentText"))
+                                val pub = cr.optJSONObject("publishedTimeText")?.optJSONArray("runs")
+                                    ?.optJSONObject(0)?.optString("text").orEmpty()
+                                val likes = cr.optJSONObject("voteCount")?.optString("simpleText")
+                                    ?: joinRuns(cr.optJSONObject("voteCount"))
+                                val thumbs = cr.optJSONObject("authorThumbnail")?.optJSONArray("thumbnails")
+                                val avatar = if (thumbs != null && thumbs.length() > 0) {
+                                    thumbs.getJSONObject(thumbs.length() - 1).optString("url")
+                                } else ""
+
+                                if (id.isNotBlank() && text.isNotBlank()) {
+                                    comments.add(
+                                        YouTubeComment(
+                                            id = id,
+                                            author = author,
+                                            authorAvatarUrl = avatar,
+                                            text = text,
+                                            publishedTime = pub,
+                                            likeCount = likes
+                                        )
+                                    )
+                                }
+                            }
+                            for (key in node.keys()) {
+                                extractComments(node.get(key))
+                            }
+                        }
+                        is JSONArray -> {
+                            for (i in 0 until node.length()) {
+                                extractComments(node.get(i))
+                            }
+                        }
+                    }
+                }
+
+                extractComments(json)
+                val nextToken = extractContinuationToken(json)
+                ResultState.Success(CommentsPagedResult(comments, nextToken))
+            }
+        } catch (e: IOException) {
+            ResultState.NetworkError("Failed to load comments", e)
+        } catch (e: Throwable) {
+            ResultState.ParseError("Failed to parse comments: ${e.message}", e)
+        }
+    }
+
+    /**
+     * Polls YouTube live chat for active live stream.
+     */
+    suspend fun fetchLiveChat(continuationToken: String): ResultState<Pair<List<LiveChatMessage>, String?>> = withContext(Dispatchers.IO) {
+        if (continuationToken.isBlank()) {
+            return@withContext ResultState.Success(Pair(emptyList(), null))
+        }
+        try {
+            val body = JSONObject()
+                .put("context", WEB_CLIENT_CONTEXT)
+                .put("continuation", continuationToken)
+
+            val req = Request.Builder()
+                .url("$YT_BASE/live_chat/get_live_chat?prettyPrint=false")
+                .post(body.toString().toRequestBody(JSON))
+                .header("User-Agent", NetworkModule.UA_WEB)
+                .header("Origin", ORIGIN_YT)
+                .build()
+
+            NetworkModule.apiClient.newCall(req).await().use { resp ->
+                if (!resp.isSuccessful) {
+                    return@withContext ResultState.NetworkError("Live chat returned HTTP ${resp.code}")
+                }
+                val json = JSONObject(resp.body?.string().orEmpty())
+                val messages = mutableListOf<LiveChatMessage>()
+
+                val actions = json.optJSONObject("continuationContents")
+                    ?.optJSONObject("liveChatContinuation")
+                    ?.optJSONArray("actions")
+
+                if (actions != null) {
+                    for (i in 0 until actions.length()) {
+                        val act = actions.optJSONObject(i) ?: continue
+                        val item = act.optJSONObject("addChatItemAction")?.optJSONObject("item") ?: continue
+                        if (item.has("liveChatTextMessageRenderer")) {
+                            val r = item.getJSONObject("liveChatTextMessageRenderer")
+                            val id = r.optString("id")
+                            val author = joinRuns(r.optJSONObject("authorName"))
+                            val message = joinRuns(r.optJSONObject("message"))
+                            val photo = r.optJSONObject("authorPhoto")?.optJSONArray("thumbnails")
+                                ?.optJSONObject(0)?.optString("url").orEmpty()
+                            messages.add(
+                                LiveChatMessage(
+                                    id = id,
+                                    authorName = author,
+                                    authorPhotoUrl = photo,
+                                    messageText = message
+                                )
+                            )
+                        }
+                    }
+                }
+
+                val nextToken = extractContinuationToken(json)
+                ResultState.Success(Pair(messages, nextToken))
+            }
+        } catch (e: Throwable) {
+            ResultState.ParseError("Live chat error: ${e.message}", e)
+        }
+    }
+
+    // ---------------------------------------------------------------- Helper Parsers
+
+    private fun joinRuns(obj: JSONObject?): String {
+        if (obj == null) return ""
+        val runs = obj.optJSONArray("runs")
+        if (runs != null && runs.length() > 0) {
+            val sb = StringBuilder()
+            for (i in 0 until runs.length()) {
+                val r = runs.optJSONObject(i) ?: continue
+                sb.append(r.optString("text"))
+            }
+            return sb.toString()
+        }
+        return obj.optString("simpleText", "")
+    }
 
     private fun parseVideoRenderers(root: JSONObject): List<YouTubeVideo> {
         val out = mutableListOf<YouTubeVideo>()
@@ -432,12 +728,14 @@ object YouTubeClient {
                         val vr = node.getJSONObject("videoRenderer")
                         val vid = vr.optString("videoId")
                         if (vid.isNotBlank() && seen.add(vid)) {
-                            val title = vr.optJSONObject("title")?.optJSONArray("runs")
-                                ?.optJSONObject(0)?.optString("text")
-                                ?: vr.optJSONObject("title")?.optString("simpleText").orEmpty()
+                            val title = joinRuns(vr.optJSONObject("title"))
+                            val channel = joinRuns(vr.optJSONObject("ownerText"))
+                                .ifBlank { joinRuns(vr.optJSONObject("shortBylineText")) }
 
-                            val channel = vr.optJSONObject("ownerText")?.optJSONArray("runs")
-                                ?.optJSONObject(0)?.optString("text").orEmpty()
+                            val channelBrowseId = vr.optJSONObject("ownerText")
+                                ?.optJSONArray("runs")?.optJSONObject(0)
+                                ?.optJSONObject("navigationEndpoint")
+                                ?.optJSONObject("browseEndpoint")?.optString("browseId").orEmpty()
 
                             val views = vr.optJSONObject("viewCountText")?.optString("simpleText")
                                 ?: vr.optJSONObject("shortViewCountText")?.optString("simpleText").orEmpty()
@@ -448,37 +746,36 @@ object YouTubeClient {
                             val thumbs = vr.optJSONObject("thumbnail")?.optJSONArray("thumbnails")
                             val thumb = if (thumbs != null && thumbs.length() > 0) {
                                 thumbs.getJSONObject(thumbs.length() - 1).optString("url")
-                            } else {
-                                "https://i.ytimg.com/vi/$vid/hqdefault.jpg"
-                            }
+                            } else "https://i.ytimg.com/vi/$vid/hqdefault.jpg"
 
-                            val chThumbs = vr.optJSONObject("channelThumbnailSupportedRenderers")
+                            val channelThumbs = vr.optJSONObject("channelThumbnailSupportedRenderers")
                                 ?.optJSONObject("channelThumbnailWithLinkRenderer")
                                 ?.optJSONObject("thumbnail")?.optJSONArray("thumbnails")
-                            val chThumb = if (chThumbs != null && chThumbs.length() > 0) {
-                                chThumbs.getJSONObject(chThumbs.length() - 1).optString("url")
+                            val channelAvatar = if (channelThumbs != null && channelThumbs.length() > 0) {
+                                channelThumbs.getJSONObject(channelThumbs.length() - 1).optString("url")
                             } else ""
 
-                            if (title.isNotBlank()) {
-                                out.add(
-                                    YouTubeVideo(
-                                        id = vid,
-                                        title = title,
-                                        channelTitle = channel,
-                                        channelAvatarUrl = chThumb,
-                                        thumbnailUrl = thumb,
-                                        durationText = duration,
-                                        durationMs = parseDuration(duration),
-                                        viewCountText = views,
-                                        publishedTimeText = published
-                                    )
+                            val desc = joinRuns(vr.optJSONObject("descriptionSnippet"))
+
+                            out.add(
+                                YouTubeVideo(
+                                    id = vid,
+                                    title = title.ifBlank { "Video" },
+                                    channelTitle = channel.ifBlank { "Channel" },
+                                    channelId = channelBrowseId,
+                                    channelAvatarUrl = channelAvatar,
+                                    thumbnailUrl = thumb,
+                                    durationText = duration,
+                                    viewCountText = views,
+                                    publishedTimeText = published,
+                                    description = desc,
+                                    isShort = false
                                 )
-                            }
+                            )
                         }
                     }
-                    val keys = node.keys()
-                    while (keys.hasNext()) {
-                        extract(node.get(keys.next()))
+                    for (k in node.keys()) {
+                        extract(node.get(k))
                     }
                 }
                 is JSONArray -> {
@@ -493,37 +790,45 @@ object YouTubeClient {
         return out
     }
 
-    private fun extractContinuationToken(node: Any): String? {
-        when (node) {
-            is JSONObject -> {
-                if (node.has("continuationItemRenderer")) {
-                    val cr = node.optJSONObject("continuationItemRenderer")
-                    val tok = cr?.optJSONObject("continuationEndpoint")
-                        ?.optJSONObject("continuationCommand")
-                        ?.optString("token")
-                    if (!tok.isNullOrBlank()) return tok
+    private fun extractContinuationToken(root: JSONObject): String? {
+        var foundToken: String? = null
+
+        fun search(node: Any) {
+            if (foundToken != null) return
+            when (node) {
+                is JSONObject -> {
+                    if (node.has("continuationCommand")) {
+                        val token = node.optJSONObject("continuationCommand")?.optString("token")
+                        if (!token.isNullOrBlank()) {
+                            foundToken = token
+                            return
+                        }
+                    }
+                    if (node.has("continuationItemRenderer")) {
+                        val token = node.optJSONObject("continuationItemRenderer")
+                            ?.optJSONObject("continuationEndpoint")
+                            ?.optJSONObject("continuationCommand")
+                            ?.optString("token")
+                        if (!token.isNullOrBlank()) {
+                            foundToken = token
+                            return
+                        }
+                    }
+                    for (key in node.keys()) {
+                        search(node.get(key))
+                        if (foundToken != null) return
+                    }
                 }
-                val keys = node.keys()
-                while (keys.hasNext()) {
-                    val child = node.get(keys.next())
-                    val res = extractContinuationToken(child)
-                    if (!res.isNullOrBlank()) return res
-                }
-            }
-            is JSONArray -> {
-                for (i in 0 until node.length()) {
-                    val child = node.get(i)
-                    val res = extractContinuationToken(child)
-                    if (!res.isNullOrBlank()) return res
+                is JSONArray -> {
+                    for (i in 0 until node.length()) {
+                        search(node.get(i))
+                        if (foundToken != null) return
+                    }
                 }
             }
         }
-        return null
-    }
 
-    private fun parseDuration(text: String): Long {
-        if (text.isBlank()) return 0L
-        val parts = text.split(":").mapNotNull { it.toLongOrNull() }
-        return parts.fold(0L) { acc, v -> acc * 60 + v } * 1000L
+        search(root)
+        return foundToken
     }
 }
