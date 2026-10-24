@@ -38,7 +38,6 @@ import com.reayt.youtube.ui.components.YouTubeNavTab
 import com.reayt.youtube.ui.components.YouTubeWatchScreen
 import com.reayt.youtube.ui.screens.HomeScreen
 import com.reayt.youtube.ui.screens.SearchScreen
-import com.reayt.youtube.ui.screens.ShortsScreen
 import com.reayt.youtube.ui.screens.SubscriptionsScreen
 import com.reayt.youtube.ui.screens.YouScreen
 import com.reayt.youtube.ui.theme.YouTubeDarkBg
@@ -147,7 +146,6 @@ fun MainAppShell() {
                         onSearchClick = { isSearchOpen = true },
                         onProfileClick = { selectedTab = YouTubeNavTab.YOU }
                     )
-                    YouTubeNavTab.SHORTS -> ShortsScreen()
                     YouTubeNavTab.SUBSCRIPTIONS -> SubscriptionsScreen(
                         onSearchClick = { isSearchOpen = true },
                         onProfileClick = { selectedTab = YouTubeNavTab.YOU }

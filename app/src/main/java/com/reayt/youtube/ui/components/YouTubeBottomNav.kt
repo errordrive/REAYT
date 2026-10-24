@@ -1,11 +1,9 @@
 package com.reayt.youtube.ui.components
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.PlayCircleOutline
 import androidx.compose.material.icons.filled.Subscriptions
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.*
@@ -19,7 +17,7 @@ import com.reayt.youtube.ui.theme.YouTubeDarkBg
 import com.reayt.youtube.ui.theme.YouTubeTextPrimary
 
 enum class YouTubeNavTab {
-    HOME, SHORTS, SUBSCRIPTIONS, YOU
+    HOME, SUBSCRIPTIONS, YOU
 }
 
 @Composable
@@ -47,35 +45,8 @@ fun YouTubeBottomNav(
             label = {
                 Text(
                     text = "Home",
-                    fontSize = 10.sp,
+                    fontSize = 11.sp,
                     fontWeight = if (selectedTab == YouTubeNavTab.HOME) FontWeight.Bold else FontWeight.Normal
-                )
-            },
-            colors = NavigationBarItemDefaults.colors(
-                selectedIconColor = YouTubeTextPrimary,
-                selectedTextColor = YouTubeTextPrimary,
-                unselectedIconColor = Color(0xFFAAAAAA),
-                unselectedTextColor = Color(0xFFAAAAAA),
-                indicatorColor = Color.Transparent
-            )
-        )
-
-        // Shorts Tab
-        NavigationBarItem(
-            selected = selectedTab == YouTubeNavTab.SHORTS,
-            onClick = { onTabSelected(YouTubeNavTab.SHORTS) },
-            icon = {
-                Icon(
-                    imageVector = Icons.Default.PlayCircleOutline,
-                    contentDescription = "Shorts",
-                    modifier = Modifier.size(24.dp)
-                )
-            },
-            label = {
-                Text(
-                    text = "Shorts",
-                    fontSize = 10.sp,
-                    fontWeight = if (selectedTab == YouTubeNavTab.SHORTS) FontWeight.Bold else FontWeight.Normal
                 )
             },
             colors = NavigationBarItemDefaults.colors(
@@ -101,7 +72,7 @@ fun YouTubeBottomNav(
             label = {
                 Text(
                     text = "Subscriptions",
-                    fontSize = 10.sp,
+                    fontSize = 11.sp,
                     fontWeight = if (selectedTab == YouTubeNavTab.SUBSCRIPTIONS) FontWeight.Bold else FontWeight.Normal
                 )
             },
@@ -128,7 +99,7 @@ fun YouTubeBottomNav(
             label = {
                 Text(
                     text = "You",
-                    fontSize = 10.sp,
+                    fontSize = 11.sp,
                     fontWeight = if (selectedTab == YouTubeNavTab.YOU) FontWeight.Bold else FontWeight.Normal
                 )
             },

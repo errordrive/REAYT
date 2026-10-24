@@ -128,14 +128,6 @@ object YouTubeClient {
     }
 
     /**
-     * Fetches short-form vertical videos.
-     */
-    suspend fun fetchShorts(): List<YouTubeVideo> = withContext(Dispatchers.IO) {
-        val results = searchVideos("trending shorts viral video")
-        results.map { it.copy(isShort = true) }
-    }
-
-    /**
      * Fetches videos for a subscribed channel.
      */
     suspend fun fetchChannelVideos(channelTitle: String): List<YouTubeVideo> = withContext(Dispatchers.IO) {

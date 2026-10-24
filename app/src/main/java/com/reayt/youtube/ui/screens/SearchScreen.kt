@@ -323,7 +323,7 @@ fun SearchScreen(
                     "Tech Reviews 2026",
                     "Live Breaking News",
                     "Popular Podcasts",
-                    "Viral Shorts"
+                    "Documentaries & Science"
                 )
 
                 items(trendingTags) { tag ->

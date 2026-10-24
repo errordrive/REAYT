@@ -24,9 +24,6 @@ object YouTubeRepository {
     private val _feedVideos = MutableStateFlow<List<YouTubeVideo>>(emptyList())
     val feedVideos: StateFlow<List<YouTubeVideo>> = _feedVideos.asStateFlow()
 
-    private val _shortsVideos = MutableStateFlow<List<YouTubeVideo>>(emptyList())
-    val shortsVideos: StateFlow<List<YouTubeVideo>> = _shortsVideos.asStateFlow()
-
     private val _historyVideos = MutableStateFlow<List<YouTubeVideo>>(emptyList())
     val historyVideos: StateFlow<List<YouTubeVideo>> = _historyVideos.asStateFlow()
 
@@ -59,7 +56,6 @@ object YouTubeRepository {
 
     init {
         loadCategoryVideos("All")
-        loadShorts()
         loadSubscriptionsFeed()
     }
 
@@ -84,18 +80,6 @@ object YouTubeRepository {
         }
     }
 
-    fun loadShorts() {
-        repositoryScope.launch {
-            try {
-                val shorts = YouTubeClient.fetchShorts()
-                if (shorts.isNotEmpty()) {
-                    _shortsVideos.value = shorts
-                }
-            } catch (e: Throwable) {
-                android.util.Log.e("YouTubeRepository", "loadShorts error: ${e.message}")
-            }
-        }
-    }
 
     fun loadSubscriptionsFeed() {
         repositoryScope.launch {
