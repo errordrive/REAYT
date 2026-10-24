@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Sp0Plus" parent="android:Theme.Material.NoActionBar">
-        <item name="android:statusBarColor">#121212</item>
-        <item name="android:navigationBarColor">#121212</item>
-        <item name="android:windowBackground">#121212</item>
+    <style name="Theme.YouTube" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#0F0F0F</item>
+        <item name="android:navigationBarColor">#0F0F0F</item>
+        <item name="android:windowBackground">#0F0F0F</item>
     </style>
+    <style name="Theme.Sp0Plus" parent="Theme.YouTube" />
 </resources>

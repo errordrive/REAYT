@@ -19,5 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Sp0Plus"
+rootProject.name = "REAYT"
 include(":app")

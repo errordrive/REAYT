@@ -5,15 +5,15 @@ plugins {
 }
 
 android {
-    namespace = "com.sp0.plus"
+    namespace = "com.reayt.youtube"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.sp0.plus"
+        applicationId = "com.reayt.youtube"
         minSdk = 26
         targetSdk = 34
-        versionCode = 909876
-        versionName = "9.0.9876"
+        versionCode = 10001
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -73,6 +73,7 @@ dependencies {
     // Media3 ExoPlayer & Session
     val media3Version = "1.3.1"
     implementation("androidx.media3:media3-exoplayer:$media3Version")
+    implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
     implementation("androidx.media3:media3-session:$media3Version")
     implementation("androidx.media3:media3-ui:$media3Version")
 
