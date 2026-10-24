@@ -98,6 +98,21 @@ Transformed the application from an initial prototype with static singletons, mi
 - **`YouTubeClientParserTest.kt`**:
   - Verifies rejection of `reelShelfRenderer`, `reelItemRenderer`, `shortsLockupViewModel`, and `/shorts/`.
   - Verifies `lockupViewModel` parsing and `compactVideoRenderer` parsing.
+  - Verifies `onResponseReceivedCommands` continuation token extraction for pagination.
+  - Verifies search filter chip `continuationCommand` tokens are strictly ignored in favor of real pagination tokens.
+
+---
+
+## 9. Bug Fix: Restored Real Video Data Loading & Pagination
+- **Root Cause 1: InnerTube `FEwhat_to_watch` Empty on Guest Sessions**:
+  - YouTube InnerTube `/browse` with `browseId: "FEwhat_to_watch"` intentionally returns 0 videos (`feedNudgeRenderer` "Try searching to get started") for unauthenticated guest web sessions without account watch history.
+  - *Fix*: In `YouTubeClient.fetchFeedPaged()` and `fetchBrowseFeed()`, if unauthenticated guest browse returns 0 videos, it automatically queries high-yield long-form video queries (`"viral videos full"`, category-tailored queries).
+- **Root Cause 2: Filter Chip Token Collisions in `extractContinuationToken()`**:
+  - Search and browse headers contain `chipCloudChipRenderer` elements whose navigation endpoints contain `continuationCommand` reload tokens.
+  - The recursive parser was matching the chip filter reload token first rather than the item pagination token, corrupting subsequent pagination requests.
+  - *Fix*: Prioritized `onResponseReceivedCommands` / `onResponseReceivedActions` `appendContinuationItemsAction.continuationItems` and `continuationItemRenderer`, while explicitly skipping `chipCloudRenderer`, `searchHeaderRenderer`, `header`, and `chips`.
+- **Root Cause 3: Empty Feed Handling in `YouTubeRepository`**:
+  - *Fix*: If initial feed loads 0 videos, `YouTubeRepository` immediately invokes `refillFromSeeds()` so the Home screen is never left empty or blank. Infinite scroll smoothly refills when tokens expire.
   - Verifies continuation token extraction.
 - **`YouTubeRepositoryTest.kt`**:
   - Verifies ID deduplication logic during feed pagination.

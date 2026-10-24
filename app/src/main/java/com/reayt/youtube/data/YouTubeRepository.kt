@@ -112,16 +112,18 @@ class YouTubeRepository(
         if (seeds.isEmpty()) {
             seeds.addAll(
                 listOf(
-                    "trending viral videos",
-                    "popular songs music",
-                    "technology documentary",
-                    "interesting science",
-                    "popular entertainment"
+                    "viral videos full",
+                    "trending music official video",
+                    "documentary full movie",
+                    "popular podcasts",
+                    "popular gaming walkthrough",
+                    "news live today",
+                    "popular tech reviews"
                 )
             )
         }
 
-        val chosenSeed = seeds.shuffled().firstOrNull() ?: "popular videos"
+        val chosenSeed = seeds.shuffled().firstOrNull() ?: "viral videos full"
         val searchRes = YouTubeClient.searchVideosPaged(chosenSeed)
         if (searchRes is ResultState.Success) {
             return searchRes.data.videos.filter { it.id !in seenIds }
@@ -165,7 +167,11 @@ class YouTubeRepository(
                 feedMutex.withLock {
                     when (result) {
                         is ResultState.Success -> {
-                            val paged = result.data
+                            var paged = result.data
+                            if (paged.videos.isEmpty() && _feedVideos.value.isEmpty()) {
+                                val refilled = refillFromSeeds()
+                                paged = YouTubePagedResult(refilled, paged.continuationToken)
+                            }
                             feedContinuationToken = paged.continuationToken
                             _hasFeedMore.value = true // Keep infinite scrolling active
 
@@ -173,7 +179,7 @@ class YouTubeRepository(
                             val existingIds = currentList.map { it.id }.toSet()
                             val newUnique = paged.videos.filter { it.id !in existingIds }
 
-                            val updated = if (feedContinuationToken == null && currentList.isEmpty()) {
+                            val updated = if (currentList.isEmpty()) {
                                 paged.videos
                             } else {
                                 currentList + newUnique
@@ -264,7 +270,7 @@ class YouTubeRepository(
                             val existingIds = currentList.map { it.id }.toSet()
                             val newUnique = paged.videos.filter { it.id !in existingIds }
 
-                            _searchVideos.value = if (searchContinuationToken == null && currentList.isEmpty()) {
+                            _searchVideos.value = if (currentList.isEmpty()) {
                                 paged.videos
                             } else {
                                 currentList + newUnique

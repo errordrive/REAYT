@@ -53,6 +53,88 @@ class YouTubeClientParserTest {
     }
 
     @Test
+    fun testOnResponseReceivedCommandsContinuationExtraction() {
+        val sampleJson = """
+        {
+            "onResponseReceivedCommands": [
+                {
+                    "appendContinuationItemsAction": {
+                        "continuationItems": [
+                            {
+                                "itemSectionRenderer": {}
+                            },
+                            {
+                                "continuationItemRenderer": {
+                                    "continuationEndpoint": {
+                                        "continuationCommand": {
+                                            "token": "page_2_token_xyz"
+                                        }
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        """.trimIndent()
+
+        val json = JSONObject(sampleJson)
+        val token = YouTubeClient.extractContinuationToken(json)
+        assertEquals("page_2_token_xyz", token)
+    }
+
+    @Test
+    fun testFilterChipContinuationIgnoredForPaginationToken() {
+        val sampleJson = """
+        {
+            "header": {
+                "searchHeaderRenderer": {
+                    "chipBar": {
+                        "chipCloudRenderer": {
+                            "chips": [
+                                {
+                                    "chipCloudChipRenderer": {
+                                        "navigationEndpoint": {
+                                            "continuationCommand": {
+                                                "token": "chip_filter_reload_token"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            "contents": {
+                "twoColumnSearchResultsRenderer": {
+                    "primaryContents": {
+                        "sectionListRenderer": {
+                            "contents": [
+                                {
+                                    "continuationItemRenderer": {
+                                        "continuationEndpoint": {
+                                            "continuationCommand": {
+                                                "token": "real_pagination_token_789"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+        """.trimIndent()
+
+        val json = JSONObject(sampleJson)
+        val token = YouTubeClient.extractContinuationToken(json)
+        assertEquals("real_pagination_token_789", token)
+    }
+
+    @Test
     fun testShortsRejection() {
         // reelShelfRenderer should be filtered out
         val sampleJson = """

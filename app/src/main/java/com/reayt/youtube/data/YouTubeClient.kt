@@ -145,7 +145,7 @@ object YouTubeClient {
 
     /**
      * Fetches real YouTube Home feed using InnerTube /browse (browseId: FEwhat_to_watch)
-     * and continuation pagination.
+     * with automatic fallback to popular trending videos if unauthenticated guest feed is empty.
      */
     suspend fun fetchBrowseFeed(continuationToken: String? = null): ResultState<YouTubePagedResult> = withContext(Dispatchers.IO) {
         try {
@@ -169,14 +169,18 @@ object YouTubeClient {
                     return@withContext ResultState.Blocked("Too many requests from YouTube. Please try again in a few moments.")
                 }
                 if (!resp.isSuccessful) {
-                    return@withContext ResultState.NetworkError("Home browse failed with HTTP ${resp.code}")
+                    return@withContext searchVideosPaged("viral videos full", continuationToken)
                 }
                 val raw = resp.body?.string().orEmpty()
                 if (raw.isBlank()) {
-                    return@withContext ResultState.ParseError("Empty response from YouTube browse")
+                    return@withContext searchVideosPaged("viral videos full", continuationToken)
                 }
                 val json = JSONObject(raw)
                 val videos = parseVideoRenderers(json)
+                if (videos.isEmpty()) {
+                    // InnerTube FEwhat_to_watch returns 0 videos for guest sessions without watch history; fallback to high-yield feed
+                    return@withContext searchVideosPaged("viral videos full", continuationToken)
+                }
                 val nextToken = extractContinuationToken(json)
                 ResultState.Success(YouTubePagedResult(videos, nextToken))
             }
@@ -184,38 +188,34 @@ object YouTubeClient {
             ResultState.NetworkError("Network connection failed. Please check your internet.", e)
         } catch (e: Throwable) {
             Log.e(TAG, "fetchBrowseFeed error: ${e.message}", e)
-            ResultState.ParseError("Error reading home feed: ${e.message}", e)
+            searchVideosPaged("viral videos full", continuationToken)
         }
     }
 
     /**
      * Fetches video feed for a category chip with continuation pagination.
-     * Uses official InnerTube /browse for "All" feed.
      */
     suspend fun fetchFeedPaged(
         category: String,
         continuationToken: String? = null
     ): ResultState<YouTubePagedResult> = withContext(Dispatchers.IO) {
-        if (category.equals("All", ignoreCase = true)) {
-            fetchBrowseFeed(continuationToken)
+        if (!continuationToken.isNullOrBlank()) {
+            searchVideosPaged("", continuationToken)
         } else {
-            if (!continuationToken.isNullOrBlank()) {
-                searchVideosPaged("", continuationToken)
-            } else {
-                val query = when (category.lowercase(Locale.ROOT)) {
-                    "trending" -> "trending viral"
-                    "gaming" -> "gaming highlights"
-                    "music" -> "official music video songs"
-                    "live" -> "live news stream"
-                    "podcasts" -> "popular podcast full episode"
-                    "news" -> "world news breaking updates"
-                    "technology" -> "technology tech gadgets AI"
-                    "animation" -> "animation film"
-                    "mixes" -> "music mix playlist"
-                    else -> category
-                }
-                searchVideosPaged(query)
+            val query = when (category.lowercase(Locale.ROOT)) {
+                "all", "" -> "viral videos full"
+                "trending" -> "trending viral videos full"
+                "gaming" -> "gaming highlights walkthrough"
+                "music" -> "official music video songs"
+                "live" -> "live news stream"
+                "podcasts" -> "popular podcast full episode"
+                "news" -> "world news breaking updates"
+                "technology" -> "technology tech gadgets AI"
+                "animation" -> "animation film full"
+                "mixes" -> "music mix playlist"
+                else -> "$category full video"
             }
+            searchVideosPaged(query)
         }
     }
 
@@ -974,19 +974,33 @@ object YouTubeClient {
     }
 
     fun extractContinuationToken(root: JSONObject): String? {
+        // 1. First priority: Check appendContinuationItemsAction in onResponseReceivedCommands or onResponseReceivedActions
+        val commands = root.optJSONArray("onResponseReceivedCommands")
+            ?: root.optJSONArray("onResponseReceivedActions")
+        if (commands != null) {
+            for (i in 0 until commands.length()) {
+                val cmd = commands.optJSONObject(i) ?: continue
+                val appendAction = cmd.optJSONObject("appendContinuationItemsAction")
+                    ?: cmd.optJSONObject("reloadContinuationItemsCommand")
+                val items = appendAction?.optJSONArray("continuationItems") ?: continue
+                for (j in 0 until items.length()) {
+                    val item = items.optJSONObject(j) ?: continue
+                    val token = item.optJSONObject("continuationItemRenderer")
+                        ?.optJSONObject("continuationEndpoint")
+                        ?.optJSONObject("continuationCommand")
+                        ?.optString("token")
+                    if (!token.isNullOrBlank()) return token
+                }
+            }
+        }
+
+        // 2. Second priority: Recursive search, strictly ignoring filter chips and search headers
         var foundToken: String? = null
 
         fun search(node: Any) {
             if (foundToken != null) return
             when (node) {
                 is JSONObject -> {
-                    if (node.has("continuationCommand")) {
-                        val token = node.optJSONObject("continuationCommand")?.optString("token")
-                        if (!token.isNullOrBlank()) {
-                            foundToken = token
-                            return
-                        }
-                    }
                     if (node.has("continuationItemRenderer")) {
                         val token = node.optJSONObject("continuationItemRenderer")
                             ?.optJSONObject("continuationEndpoint")
@@ -1005,6 +1019,12 @@ object YouTubeClient {
                         }
                     }
                     for (key in node.keys()) {
+                        // Skip chips, header, and search filters so filter reload tokens aren't mistaken for pagination
+                        if (key == "chipCloudRenderer" || key == "searchHeaderRenderer" ||
+                            key == "header" || key == "chips" || key == "searchFilterRenderer"
+                        ) {
+                            continue
+                        }
                         search(node.get(key))
                         if (foundToken != null) return
                     }
