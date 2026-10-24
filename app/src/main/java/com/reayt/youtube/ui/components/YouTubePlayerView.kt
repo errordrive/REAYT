@@ -42,6 +42,7 @@ fun YouTubePlayerView(
     val isAutoplayEnabled by VideoPlaybackManager.isAutoplayEnabled.collectAsState()
     val streamInfo by VideoPlaybackManager.streamInfo.collectAsState()
     val streamError by VideoPlaybackManager.streamError.collectAsState()
+    val isInPiP by VideoPlaybackManager.isInPictureInPicture.collectAsState()
 
     var showControls by remember { mutableStateOf(true) }
     var showQualityDialog by remember { mutableStateOf(false) }
@@ -63,7 +64,9 @@ fun YouTubePlayerView(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null
             ) {
-                showControls = !showControls
+                if (!isInPiP) {
+                    showControls = !showControls
+                }
             }
     ) {
         // Native Media3 PlayerView video rendering surface
@@ -142,7 +145,7 @@ fun YouTubePlayerView(
 
         // Official YouTube Video Controls Overlay
         AnimatedVisibility(
-            visible = showControls,
+            visible = showControls && !isInPiP,
             enter = fadeIn(),
             exit = fadeOut()
         ) {

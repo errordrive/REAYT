@@ -73,6 +73,13 @@ object VideoPlaybackManager {
     private val _streamError = MutableStateFlow<String?>(null)
     val streamError: StateFlow<String?> = _streamError.asStateFlow()
 
+    private val _isInPictureInPicture = MutableStateFlow(false)
+    val isInPictureInPicture: StateFlow<Boolean> = _isInPictureInPicture.asStateFlow()
+
+    fun updateIsInPictureInPicture(inPiP: Boolean) {
+        _isInPictureInPicture.value = inPiP
+    }
+
     fun getActivePlayer(): ExoPlayer? {
         return PlaybackService.instance?.player
     }

@@ -55,3 +55,8 @@ data class YouTubeComment(
     val publishedTime: String = "2 days ago",
     val likeCount: String = "124"
 )
+
+data class YouTubePagedResult(
+    val videos: List<YouTubeVideo>,
+    val continuationToken: String? = null
+)

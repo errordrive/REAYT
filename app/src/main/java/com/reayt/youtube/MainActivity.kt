@@ -96,6 +96,27 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val isPlaying = VideoPlaybackManager.isPlaying.value
+            val currentVideo = VideoPlaybackManager.currentVideo.value
+            if (isPlaying && currentVideo != null) {
+                try {
+                    val params = android.app.PictureInPictureParams.Builder()
+                        .setAspectRatio(android.util.Rational(16, 9))
+                        .build()
+                    enterPictureInPictureMode(params)
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        VideoPlaybackManager.updateIsInPictureInPicture(isInPictureInPictureMode)
+    }
+
     override fun onDestroy() {
         controllerFuture?.let { MediaController.releaseFuture(it) }
         super.onDestroy()
@@ -104,12 +125,25 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun MainAppShell() {
+    val isInPiP by VideoPlaybackManager.isInPictureInPicture.collectAsState()
+    val currentVideo by VideoPlaybackManager.currentVideo.collectAsState()
+    val isVideoExpanded by VideoPlaybackManager.isPlayerExpanded.collectAsState()
+
+    // When in Android Picture-in-Picture mode, render only the native video player surface
+    if (isInPiP && currentVideo != null) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+        ) {
+            com.reayt.youtube.ui.components.YouTubePlayerView(modifier = Modifier.fillMaxSize())
+        }
+        return
+    }
+
     var selectedTab by remember { mutableStateOf(YouTubeNavTab.HOME) }
     var isSearchOpen by remember { mutableStateOf(false) }
     var isSettingsOpen by remember { mutableStateOf(false) }
-
-    val currentVideo by VideoPlaybackManager.currentVideo.collectAsState()
-    val isVideoExpanded by VideoPlaybackManager.isPlayerExpanded.collectAsState()
 
     var lastBackPressTime by remember { mutableLongStateOf(0L) }
     val context = LocalContext.current

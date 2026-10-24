@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -24,7 +25,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.reayt.youtube.data.YouTubeClient
 import com.reayt.youtube.data.YouTubeRepository
-import com.reayt.youtube.model.YouTubeVideo
 import com.reayt.youtube.player.VideoPlaybackManager
 import com.reayt.youtube.ui.components.YouTubeVideoCard
 import com.reayt.youtube.ui.theme.YouTubeDarkBg
@@ -33,57 +33,68 @@ import com.reayt.youtube.ui.theme.YouTubeSurface
 import com.reayt.youtube.ui.theme.YouTubeTextPrimary
 import com.reayt.youtube.ui.theme.YouTubeTextSecondary
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 @Composable
 fun SearchScreen(
     onBack: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    var searchQuery by remember { mutableStateOf("") }
-    var searchResults by remember { mutableStateOf<List<YouTubeVideo>>(emptyList()) }
-    var suggestions by remember { mutableStateOf<List<String>>(emptyList()) }
-    var isSearching by remember { mutableStateOf(false) }
-    var hasSearched by remember { mutableStateOf(false) }
-
+    val searchResults by YouTubeRepository.searchResults.collectAsState()
+    val isSearching by YouTubeRepository.isSearching.collectAsState()
+    val isPaginatingSearch by YouTubeRepository.isPaginatingSearch.collectAsState()
+    val hasMoreSearch by YouTubeRepository.hasMoreSearch.collectAsState()
+    val hasSearched by YouTubeRepository.hasSearched.collectAsState()
+    val activeQuery by YouTubeRepository.searchQuery.collectAsState()
     val searchHistory by YouTubeRepository.searchHistory.collectAsState()
-    val coroutineScope = rememberCoroutineScope()
+
+    var textInput by remember { mutableStateOf(activeQuery) }
+    var suggestions by remember { mutableStateOf<List<String>>(emptyList()) }
+
     val focusManager = LocalFocusManager.current
     val focusRequester = remember { FocusRequester() }
+    val listState = rememberLazyListState()
 
-    // Auto-focus on search input when screen opens
+    // Auto-focus on search input when initially opened and query is empty
     LaunchedEffect(Unit) {
-        delay(200)
-        try {
-            focusRequester.requestFocus()
-        } catch (_: Exception) {}
+        if (textInput.isBlank()) {
+            delay(200)
+            try {
+                focusRequester.requestFocus()
+            } catch (_: Exception) {}
+        }
     }
 
     // Debounced query suggestions
-    LaunchedEffect(searchQuery) {
-        if (searchQuery.isNotBlank() && !hasSearched) {
+    LaunchedEffect(textInput) {
+        if (textInput.isNotBlank() && (!hasSearched || textInput != activeQuery)) {
             delay(150)
-            suggestions = YouTubeClient.getSearchSuggestions(searchQuery)
+            suggestions = YouTubeClient.getSearchSuggestions(textInput)
         } else {
             suggestions = emptyList()
         }
     }
 
-    fun executeSearch(query: String) {
-        if (query.isBlank()) return
-        searchQuery = query.trim()
-        hasSearched = true
-        focusManager.clearFocus()
-        YouTubeRepository.addSearchQuery(searchQuery)
-        isSearching = true
-
-        coroutineScope.launch {
-            try {
-                searchResults = YouTubeClient.searchVideos(searchQuery)
-            } finally {
-                isSearching = false
-            }
+    // Incremental pagination trigger as user approaches end of search results
+    val shouldLoadMore by remember {
+        derivedStateOf {
+            val totalItems = listState.layoutInfo.totalItemsCount
+            val lastVisibleIndex = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            totalItems > 0 && lastVisibleIndex >= totalItems - 3
         }
+    }
+
+    LaunchedEffect(shouldLoadMore) {
+        if (shouldLoadMore && hasMoreSearch && !isSearching && !isPaginatingSearch) {
+            YouTubeRepository.loadMoreSearch()
+        }
+    }
+
+    fun submitSearch(query: String) {
+        val clean = query.trim()
+        if (clean.isBlank()) return
+        textInput = clean
+        focusManager.clearFocus()
+        YouTubeRepository.executeSearch(clean)
     }
 
     Column(
@@ -108,23 +119,21 @@ fun SearchScreen(
 
             // Search Input Field
             TextField(
-                value = searchQuery,
+                value = textInput,
                 onValueChange = {
-                    searchQuery = it
-                    hasSearched = false
+                    textInput = it
                 },
                 placeholder = {
                     Text("Search YouTube", color = YouTubeTextSecondary, fontSize = 14.sp)
                 },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { executeSearch(searchQuery) }),
+                keyboardActions = KeyboardActions(onSearch = { submitSearch(textInput) }),
                 trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
+                    if (textInput.isNotEmpty()) {
                         IconButton(onClick = {
-                            searchQuery = ""
-                            hasSearched = false
-                            searchResults = emptyList()
+                            textInput = ""
+                            YouTubeRepository.clearSearchResults()
                         }) {
                             Icon(imageVector = Icons.Default.Clear, contentDescription = "Clear", tint = Color.White)
                         }
@@ -146,7 +155,7 @@ fun SearchScreen(
             )
 
             // Voice Search Mic Icon
-            IconButton(onClick = { executeSearch("Trending global viral videos") }) {
+            IconButton(onClick = { submitSearch("Trending worldwide videos") }) {
                 Icon(
                     imageVector = Icons.Default.Mic,
                     contentDescription = "Voice Search",
@@ -158,7 +167,7 @@ fun SearchScreen(
 
         HorizontalDivider(color = Color(0xFF272727), thickness = 1.dp)
 
-        if (isSearching) {
+        if (isSearching && searchResults.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -171,14 +180,14 @@ fun SearchScreen(
                     modifier = Modifier.size(40.dp)
                 )
             }
-        } else if (!hasSearched && suggestions.isNotEmpty()) {
+        } else if (textInput != activeQuery && suggestions.isNotEmpty()) {
             // Live Autocomplete Suggestions
             LazyColumn(modifier = Modifier.fillMaxSize()) {
                 items(suggestions) { item ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { executeSearch(item) }
+                            .clickable { submitSearch(item) }
                             .padding(horizontal = 16.dp, vertical = 13.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(16.dp)
@@ -196,10 +205,7 @@ fun SearchScreen(
                             modifier = Modifier.weight(1f)
                         )
                         IconButton(
-                            onClick = {
-                                searchQuery = item
-                                hasSearched = false
-                            },
+                            onClick = { textInput = item },
                             modifier = Modifier.size(24.dp)
                         ) {
                             Icon(
@@ -213,7 +219,7 @@ fun SearchScreen(
                 }
             }
         } else if (hasSearched) {
-            if (searchResults.isEmpty()) {
+            if (searchResults.isEmpty() && !isSearching) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -221,14 +227,18 @@ fun SearchScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "No results found for \"$searchQuery\"",
+                        text = "No results found for \"$activeQuery\"",
                         color = YouTubeTextSecondary,
                         fontSize = 14.sp
                     )
                 }
             } else {
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    items(searchResults) { video ->
+                // Paginated Search Results List
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    items(searchResults, key = { it.id }) { video ->
                         YouTubeVideoCard(
                             video = video,
                             onClick = {
@@ -237,10 +247,35 @@ fun SearchScreen(
                             onSaveToWatchLater = { YouTubeRepository.toggleWatchLater(video) }
                         )
                     }
+
+                    // Pagination indicator at bottom
+                    item {
+                        if (isPaginatingSearch) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 18.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(
+                                    color = YouTubeRed,
+                                    strokeWidth = 2.5.dp,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    text = "Loading more results...",
+                                    color = YouTubeTextSecondary,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
+                    }
                 }
             }
         } else {
-            // Search History & Trending Searches
+            // Search History & Trending Suggestions
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
@@ -274,7 +309,7 @@ fun SearchScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { executeSearch(query) }
+                                .clickable { submitSearch(query) }
                                 .padding(vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(14.dp)
@@ -330,7 +365,7 @@ fun SearchScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { executeSearch(tag) }
+                            .clickable { submitSearch(tag) }
                             .padding(vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(14.dp)

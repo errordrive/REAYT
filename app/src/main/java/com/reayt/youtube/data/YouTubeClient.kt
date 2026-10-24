@@ -3,6 +3,7 @@ package com.reayt.youtube.data
 import android.util.Log
 import com.reayt.youtube.model.StreamFormat
 import com.reayt.youtube.model.YouTubeComment
+import com.reayt.youtube.model.YouTubePagedResult
 import com.reayt.youtube.model.YouTubeStreamInfo
 import com.reayt.youtube.model.YouTubeVideo
 import kotlinx.coroutines.Dispatchers
@@ -79,14 +80,22 @@ object YouTubeClient {
     }
 
     /**
-     * Searches YouTube for videos matching [query].
+     * Searches YouTube for videos with continuation pagination.
      */
-    suspend fun searchVideos(query: String): List<YouTubeVideo> = withContext(Dispatchers.IO) {
-        if (query.isBlank()) return@withContext emptyList()
+    suspend fun searchVideosPaged(
+        query: String,
+        continuationToken: String? = null
+    ): YouTubePagedResult = withContext(Dispatchers.IO) {
+        if (query.isBlank() && continuationToken.isNullOrBlank()) {
+            return@withContext YouTubePagedResult(emptyList(), null)
+        }
         try {
-            val body = JSONObject()
-                .put("context", WEB_CLIENT_CONTEXT)
-                .put("query", query.trim())
+            val body = JSONObject().put("context", WEB_CLIENT_CONTEXT)
+            if (!continuationToken.isNullOrBlank()) {
+                body.put("continuation", continuationToken)
+            } else {
+                body.put("query", query.trim())
+            }
 
             val req = Request.Builder()
                 .url("$YT_BASE/search?prettyPrint=false")
@@ -97,20 +106,35 @@ object YouTubeClient {
                 .build()
 
             NetworkModule.apiClient.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return@withContext emptyList()
+                if (!resp.isSuccessful) return@withContext YouTubePagedResult(emptyList(), null)
                 val json = JSONObject(resp.body?.string().orEmpty())
-                parseVideoRenderers(json)
+                val videos = parseVideoRenderers(json)
+                val nextToken = extractContinuationToken(json)
+                YouTubePagedResult(videos, nextToken)
             }
         } catch (e: Throwable) {
-            Log.e(TAG, "searchVideos error: ${e.message}", e)
-            emptyList()
+            Log.e(TAG, "searchVideosPaged error: ${e.message}", e)
+            YouTubePagedResult(emptyList(), null)
         }
     }
 
     /**
-     * Fetches video feed corresponding to a category chip.
+     * Searches YouTube for videos matching [query].
      */
-    suspend fun fetchFeed(category: String): List<YouTubeVideo> = withContext(Dispatchers.IO) {
+    suspend fun searchVideos(query: String): List<YouTubeVideo> = withContext(Dispatchers.IO) {
+        searchVideosPaged(query).videos
+    }
+
+    /**
+     * Fetches video feed corresponding to a category chip with continuation pagination.
+     */
+    suspend fun fetchFeedPaged(
+        category: String,
+        continuationToken: String? = null
+    ): YouTubePagedResult = withContext(Dispatchers.IO) {
+        if (!continuationToken.isNullOrBlank()) {
+            return@withContext searchVideosPaged("", continuationToken)
+        }
         val query = when (category.lowercase()) {
             "all" -> "trending popular videos"
             "trending" -> "trending top global viral"
@@ -124,14 +148,35 @@ object YouTubeClient {
             "mixes" -> "best remix music playlist"
             else -> "$category trending"
         }
-        searchVideos(query)
+        searchVideosPaged(query)
+    }
+
+    /**
+     * Fetches video feed corresponding to a category chip.
+     */
+    suspend fun fetchFeed(category: String): List<YouTubeVideo> = withContext(Dispatchers.IO) {
+        fetchFeedPaged(category).videos
+    }
+
+    /**
+     * Fetches videos for a subscribed channel with continuation pagination.
+     */
+    suspend fun fetchChannelVideosPaged(
+        channelTitle: String,
+        continuationToken: String? = null
+    ): YouTubePagedResult = withContext(Dispatchers.IO) {
+        if (!continuationToken.isNullOrBlank()) {
+            searchVideosPaged("", continuationToken)
+        } else {
+            searchVideosPaged("$channelTitle official videos")
+        }
     }
 
     /**
      * Fetches videos for a subscribed channel.
      */
     suspend fun fetchChannelVideos(channelTitle: String): List<YouTubeVideo> = withContext(Dispatchers.IO) {
-        searchVideos("$channelTitle official videos")
+        fetchChannelVideosPaged(channelTitle).videos
     }
 
     /**
@@ -446,6 +491,34 @@ object YouTubeClient {
 
         extract(root)
         return out
+    }
+
+    private fun extractContinuationToken(node: Any): String? {
+        when (node) {
+            is JSONObject -> {
+                if (node.has("continuationItemRenderer")) {
+                    val cr = node.optJSONObject("continuationItemRenderer")
+                    val tok = cr?.optJSONObject("continuationEndpoint")
+                        ?.optJSONObject("continuationCommand")
+                        ?.optString("token")
+                    if (!tok.isNullOrBlank()) return tok
+                }
+                val keys = node.keys()
+                while (keys.hasNext()) {
+                    val child = node.get(keys.next())
+                    val res = extractContinuationToken(child)
+                    if (!res.isNullOrBlank()) return res
+                }
+            }
+            is JSONArray -> {
+                for (i in 0 until node.length()) {
+                    val child = node.get(i)
+                    val res = extractContinuationToken(child)
+                    if (!res.isNullOrBlank()) return res
+                }
+            }
+        }
+        return null
     }
 
     private fun parseDuration(text: String): Long {
