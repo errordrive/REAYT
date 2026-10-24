@@ -335,11 +335,11 @@ class PlaybackService : MediaSessionService() {
             when (playerCommand) {
                 Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM -> {
                     com.sp0.plus.player.PlaybackManager.skipNext()
-                    return MediaSession.Callback.RESULT_SUCCESS
+                    return SessionResult.RESULT_SUCCESS
                 }
                 Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> {
                     com.sp0.plus.player.PlaybackManager.skipPrevious()
-                    return MediaSession.Callback.RESULT_SUCCESS
+                    return SessionResult.RESULT_SUCCESS
                 }
             }
             return super.onPlayerCommandRequest(session, controller, playerCommand)
