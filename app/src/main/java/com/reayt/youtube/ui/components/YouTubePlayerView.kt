@@ -41,6 +41,7 @@ fun YouTubePlayerView(
     val playbackSpeed by VideoPlaybackManager.playbackSpeed.collectAsState()
     val isAutoplayEnabled by VideoPlaybackManager.isAutoplayEnabled.collectAsState()
     val streamInfo by VideoPlaybackManager.streamInfo.collectAsState()
+    val streamError by VideoPlaybackManager.streamError.collectAsState()
 
     var showControls by remember { mutableStateOf(true) }
     var showQualityDialog by remember { mutableStateOf(false) }
@@ -87,7 +88,7 @@ fun YouTubePlayerView(
         )
 
         // Loading or Buffering Indicator
-        if (isBuffering || isLoadingStream) {
+        if ((isBuffering || isLoadingStream) && streamError == null) {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
@@ -97,6 +98,45 @@ fun YouTubePlayerView(
                     strokeWidth = 3.dp,
                     modifier = Modifier.size(42.dp)
                 )
+            }
+        }
+
+        // Stream Error Overlay with Retry
+        if (streamError != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.88f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ErrorOutline,
+                        contentDescription = null,
+                        tint = YouTubeRed,
+                        modifier = Modifier.size(44.dp)
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = streamError ?: "Unable to stream source",
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Button(
+                        onClick = {
+                            VideoPlaybackManager.currentVideo.value?.let { VideoPlaybackManager.playVideo(it) }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = YouTubeRed),
+                        shape = RoundedCornerShape(20.dp)
+                    ) {
+                        Text("Retry", color = Color.White, fontSize = 13.sp)
+                    }
+                }
             }
         }
 

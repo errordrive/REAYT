@@ -130,18 +130,33 @@ fun YouScreen(
                         fontWeight = FontWeight.Bold
                     )
 
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = Color(0xFF272727),
-                        modifier = Modifier.clickable { }
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "View all",
-                            color = Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                        )
+                        if (historyVideos.isNotEmpty()) {
+                            Text(
+                                text = "Clear",
+                                color = com.reayt.youtube.ui.theme.YouTubeRed,
+                                fontSize = 12.sp,
+                                modifier = Modifier
+                                    .clickable { YouTubeRepository.clearHistory() }
+                                    .padding(horizontal = 6.dp, vertical = 4.dp)
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = Color(0xFF272727),
+                            modifier = Modifier.clickable { }
+                        ) {
+                            Text(
+                                text = "View all",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
                     }
                 }
 
@@ -169,7 +184,7 @@ fun YouScreen(
                 }
 
                 Spacer(modifier = Modifier.height(20.dp))
-                Divider(color = Color(0xFF272727), thickness = 1.dp)
+                HorizontalDivider(color = Color(0xFF272727), thickness = 1.dp)
                 Spacer(modifier = Modifier.height(14.dp))
             }
 
@@ -206,7 +221,7 @@ fun YouScreen(
                 )
 
                 Spacer(modifier = Modifier.height(20.dp))
-                Divider(color = Color(0xFF272727), thickness = 1.dp)
+                HorizontalDivider(color = Color(0xFF272727), thickness = 1.dp)
                 Spacer(modifier = Modifier.height(14.dp))
             }
 

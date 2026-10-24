@@ -34,6 +34,8 @@ data class YouTubeStreamInfo(
     val directVideoUrl: String?,
     val audioUrl: String?,
     val qualityLabel: String,
+    val videoMimeType: String? = null,
+    val audioMimeType: String? = null,
     val formats: List<StreamFormat> = emptyList()
 )
 

@@ -36,6 +36,11 @@ object YouTubeRepository {
     private val _watchLaterVideos = MutableStateFlow<List<YouTubeVideo>>(emptyList())
     val watchLaterVideos: StateFlow<List<YouTubeVideo>> = _watchLaterVideos.asStateFlow()
 
+    private val _searchHistory = MutableStateFlow<List<String>>(
+        listOf("Rick Astley Never Gonna Give You Up", "Me at the zoo", "Official Music Videos 2026", "Tech Reviews")
+    )
+    val searchHistory: StateFlow<List<String>> = _searchHistory.asStateFlow()
+
     private val _subscriptions = MutableStateFlow<List<YouTubeChannel>>(
         listOf(
             YouTubeChannel("c_veritasium", "Veritasium", "https://yt3.ggpht.com/ytc/AIdro_kX4cT=s176-c-k-c0x00ffffff-no-rj", "15.4M subscribers"),
@@ -46,12 +51,16 @@ object YouTubeRepository {
     )
     val subscriptions: StateFlow<List<YouTubeChannel>> = _subscriptions.asStateFlow()
 
+    private val _subscriptionVideos = MutableStateFlow<List<YouTubeVideo>>(emptyList())
+    val subscriptionVideos: StateFlow<List<YouTubeVideo>> = _subscriptionVideos.asStateFlow()
+
     private val _isLoadingFeed = MutableStateFlow(false)
     val isLoadingFeed: StateFlow<Boolean> = _isLoadingFeed.asStateFlow()
 
     init {
         loadCategoryVideos("All")
         loadShorts()
+        loadSubscriptionsFeed()
     }
 
     fun selectCategory(cat: String) {
@@ -88,11 +97,51 @@ object YouTubeRepository {
         }
     }
 
+    fun loadSubscriptionsFeed() {
+        repositoryScope.launch {
+            try {
+                val channels = _subscriptions.value
+                val combined = mutableListOf<YouTubeVideo>()
+                for (ch in channels.take(3)) {
+                    val list = YouTubeClient.fetchChannelVideos(ch.title)
+                    combined.addAll(list.take(4))
+                }
+                if (combined.isNotEmpty()) {
+                    _subscriptionVideos.value = combined
+                }
+            } catch (e: Throwable) {
+                android.util.Log.e("YouTubeRepository", "loadSubscriptionsFeed error: ${e.message}")
+            }
+        }
+    }
+
+    fun addSearchQuery(query: String) {
+        if (query.isBlank()) return
+        val current = _searchHistory.value.toMutableList()
+        current.removeAll { it.equals(query.trim(), ignoreCase = true) }
+        current.add(0, query.trim())
+        _searchHistory.value = current.take(20)
+    }
+
+    fun removeSearchQuery(query: String) {
+        val current = _searchHistory.value.toMutableList()
+        current.removeAll { it.equals(query.trim(), ignoreCase = true) }
+        _searchHistory.value = current
+    }
+
+    fun clearSearchHistory() {
+        _searchHistory.value = emptyList()
+    }
+
     fun recordHistory(video: YouTubeVideo) {
         val current = _historyVideos.value.toMutableList()
         current.removeAll { it.id == video.id }
         current.add(0, video)
         _historyVideos.value = current.take(100)
+    }
+
+    fun clearHistory() {
+        _historyVideos.value = emptyList()
     }
 
     fun toggleLike(video: YouTubeVideo) {

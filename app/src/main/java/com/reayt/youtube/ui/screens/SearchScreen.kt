@@ -14,6 +14,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
@@ -30,6 +32,7 @@ import com.reayt.youtube.ui.theme.YouTubeRed
 import com.reayt.youtube.ui.theme.YouTubeSurface
 import com.reayt.youtube.ui.theme.YouTubeTextPrimary
 import com.reayt.youtube.ui.theme.YouTubeTextSecondary
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -43,11 +46,23 @@ fun SearchScreen(
     var isSearching by remember { mutableStateOf(false) }
     var hasSearched by remember { mutableStateOf(false) }
 
+    val searchHistory by YouTubeRepository.searchHistory.collectAsState()
     val coroutineScope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
+    val focusRequester = remember { FocusRequester() }
 
+    // Auto-focus on search input when screen opens
+    LaunchedEffect(Unit) {
+        delay(200)
+        try {
+            focusRequester.requestFocus()
+        } catch (_: Exception) {}
+    }
+
+    // Debounced query suggestions
     LaunchedEffect(searchQuery) {
         if (searchQuery.isNotBlank() && !hasSearched) {
+            delay(150)
             suggestions = YouTubeClient.getSearchSuggestions(searchQuery)
         } else {
             suggestions = emptyList()
@@ -56,13 +71,15 @@ fun SearchScreen(
 
     fun executeSearch(query: String) {
         if (query.isBlank()) return
-        searchQuery = query
+        searchQuery = query.trim()
         hasSearched = true
         focusManager.clearFocus()
+        YouTubeRepository.addSearchQuery(searchQuery)
         isSearching = true
+
         coroutineScope.launch {
             try {
-                searchResults = YouTubeClient.searchVideos(query)
+                searchResults = YouTubeClient.searchVideos(searchQuery)
             } finally {
                 isSearching = false
             }
@@ -89,14 +106,16 @@ fun SearchScreen(
                 )
             }
 
-            // Search TextField
+            // Search Input Field
             TextField(
                 value = searchQuery,
                 onValueChange = {
                     searchQuery = it
                     hasSearched = false
                 },
-                placeholder = { Text("Search YouTube", color = YouTubeTextSecondary, fontSize = 14.sp) },
+                placeholder = {
+                    Text("Search YouTube", color = YouTubeTextSecondary, fontSize = 14.sp)
+                },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { executeSearch(searchQuery) }),
@@ -123,10 +142,11 @@ fun SearchScreen(
                 modifier = Modifier
                     .weight(1f)
                     .height(48.dp)
+                    .focusRequester(focusRequester)
             )
 
             // Voice Search Mic Icon
-            IconButton(onClick = { executeSearch("Trending worldwide") }) {
+            IconButton(onClick = { executeSearch("Trending global viral videos") }) {
                 Icon(
                     imageVector = Icons.Default.Mic,
                     contentDescription = "Voice Search",
@@ -136,7 +156,7 @@ fun SearchScreen(
             }
         }
 
-        Divider(color = Color(0xFF272727), thickness = 1.dp)
+        HorizontalDivider(color = Color(0xFF272727), thickness = 1.dp)
 
         if (isSearching) {
             Box(
@@ -152,13 +172,14 @@ fun SearchScreen(
                 )
             }
         } else if (!hasSearched && suggestions.isNotEmpty()) {
+            // Live Autocomplete Suggestions
             LazyColumn(modifier = Modifier.fillMaxSize()) {
                 items(suggestions) { item ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { executeSearch(item) }
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                            .padding(horizontal = 16.dp, vertical = 13.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
@@ -174,12 +195,20 @@ fun SearchScreen(
                             fontSize = 15.sp,
                             modifier = Modifier.weight(1f)
                         )
-                        Icon(
-                            imageVector = Icons.Default.NorthWest,
-                            contentDescription = "Fill",
-                            tint = YouTubeTextSecondary,
-                            modifier = Modifier.size(16.dp)
-                        )
+                        IconButton(
+                            onClick = {
+                                searchQuery = item
+                                hasSearched = false
+                            },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.NorthWest,
+                                contentDescription = "Fill query",
+                                tint = YouTubeTextSecondary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -202,26 +231,91 @@ fun SearchScreen(
                     items(searchResults) { video ->
                         YouTubeVideoCard(
                             video = video,
-                            onClick = { VideoPlaybackManager.playVideo(video) },
+                            onClick = {
+                                VideoPlaybackManager.playVideo(video)
+                            },
                             onSaveToWatchLater = { YouTubeRepository.toggleWatchLater(video) }
                         )
                     }
                 }
             }
         } else {
-            // Trending Searches
-            Column(
+            // Search History & Trending Searches
+            LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(16.dp)
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
             ) {
-                Text(
-                    text = "Trending Searches",
-                    color = YouTubeTextPrimary,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(bottom = 12.dp)
-                )
+                if (searchHistory.isNotEmpty()) {
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Recent Searches",
+                                color = YouTubeTextPrimary,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Clear all",
+                                color = YouTubeRed,
+                                fontSize = 13.sp,
+                                modifier = Modifier.clickable { YouTubeRepository.clearSearchHistory() }
+                            )
+                        }
+                    }
+
+                    items(searchHistory) { query ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { executeSearch(query) }
+                                .padding(vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.History,
+                                contentDescription = null,
+                                tint = YouTubeTextSecondary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = query,
+                                color = YouTubeTextPrimary,
+                                fontSize = 14.sp,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(
+                                onClick = { YouTubeRepository.removeSearchQuery(query) },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Remove",
+                                    tint = YouTubeTextSecondary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                item {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Trending Searches",
+                        color = YouTubeTextPrimary,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                }
 
                 val trendingTags = listOf(
                     "Top Trending Songs 2026",
@@ -232,12 +326,12 @@ fun SearchScreen(
                     "Viral Shorts"
                 )
 
-                trendingTags.forEach { tag ->
+                items(trendingTags) { tag ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { executeSearch(tag) }
-                            .padding(vertical = 12.dp),
+                            .padding(vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(14.dp)
                     ) {

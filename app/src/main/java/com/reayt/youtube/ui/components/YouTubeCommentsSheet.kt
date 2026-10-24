@@ -84,7 +84,7 @@ fun YouTubeCommentsSheet(
                 }
             }
 
-            Divider(color = Color(0xFF272727), thickness = 1.dp)
+            HorizontalDivider(color = Color(0xFF272727), thickness = 1.dp)
 
             // Comments List
             LazyColumn(
@@ -170,7 +170,7 @@ fun YouTubeCommentsSheet(
                 }
             }
 
-            Divider(color = Color(0xFF272727), thickness = 1.dp)
+            HorizontalDivider(color = Color(0xFF272727), thickness = 1.dp)
 
             // Add Comment Input Bar
             Row(

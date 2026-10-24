@@ -2,9 +2,7 @@ package com.reayt.youtube.player
 
 import android.net.Uri
 import android.util.Log
-import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
-import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
@@ -107,7 +105,7 @@ object VideoPlaybackManager {
         _durationMs.value = p.duration.coerceAtLeast(0L)
         _positionMs.value = p.currentPosition.coerceAtLeast(0L)
 
-        // Handle auto-advance when video ends and autoplay is on
+        // Auto-advance to next related video when current playback finishes
         if (state == Player.STATE_ENDED && _isAutoplayEnabled.value) {
             val nextVideo = _relatedVideos.value.firstOrNull()
             if (nextVideo != null) {
@@ -118,7 +116,7 @@ object VideoPlaybackManager {
 
     fun onPlayerError(error: androidx.media3.common.PlaybackException) {
         Log.e(TAG, "Playback error: ${error.message}", error)
-        _streamError.value = "Playback error: ${error.localizedMessage ?: "Unable to stream"}"
+        _streamError.value = "Playback error: ${error.localizedMessage ?: "Unable to stream source"}"
     }
 
     fun playVideo(video: YouTubeVideo) {
@@ -144,17 +142,14 @@ object VideoPlaybackManager {
 
             if (info == null || (info.hlsUrl == null && info.directVideoUrl == null)) {
                 _isLoadingStream.value = false
-                _streamError.value = "Unable to fetch direct stream for this video."
+                _streamError.value = "Unable to fetch stream for this video."
                 return@launch
             }
 
-            val targetUrl = info.hlsUrl ?: info.directVideoUrl ?: ""
-            val isHls = info.hlsUrl != null
-
             launch(Dispatchers.Main) {
-                val p = getActivePlayer()
-                if (p == null) {
-                    _streamError.value = "Player engine initializing..."
+                val service = PlaybackService.instance
+                if (service == null) {
+                    _streamError.value = "Playback engine initializing..."
                     _isLoadingStream.value = false
                     return@launch
                 }
@@ -165,20 +160,16 @@ object VideoPlaybackManager {
                     .setArtworkUri(Uri.parse(video.thumbnailUrl))
                     .build()
 
-                val item = MediaItem.Builder()
-                    .setUri(targetUrl)
-                    .setMimeType(if (isHls) MimeTypes.APPLICATION_M3U8 else MimeTypes.VIDEO_MP4)
-                    .setMediaMetadata(mediaMetadata)
-                    .build()
+                service.playStream(
+                    hlsUrl = info.hlsUrl,
+                    directVideoUrl = info.directVideoUrl,
+                    audioUrl = info.audioUrl,
+                    videoMimeType = info.videoMimeType,
+                    metadata = mediaMetadata,
+                    playbackSpeed = _playbackSpeed.value
+                )
 
-                p.stop()
-                p.clearMediaItems()
-                p.setMediaItem(item)
-                p.playbackParameters = PlaybackParameters(_playbackSpeed.value)
-                p.prepare()
-                p.playWhenReady = true
-                p.play()
-
+                _selectedQuality.value = info.qualityLabel
                 _isLoadingStream.value = false
                 _isPlaying.value = true
             }
@@ -198,13 +189,13 @@ object VideoPlaybackManager {
 
     fun seekTo(positionMs: Long) {
         val p = getActivePlayer() ?: return
-        p.seekTo(positionMs.coerceIn(0L, _durationMs.value))
+        p.seekTo(positionMs.coerceAtLeast(0L))
         _positionMs.value = positionMs
     }
 
     fun seekForward10() {
         val p = getActivePlayer() ?: return
-        val target = (p.currentPosition + 10_000L).coerceAtMost(p.duration)
+        val target = (p.currentPosition + 10_000L).coerceAtMost(p.duration.coerceAtLeast(0L))
         p.seekTo(target)
     }
 
@@ -216,17 +207,26 @@ object VideoPlaybackManager {
 
     fun setQuality(format: StreamFormat) {
         _selectedQuality.value = format.qualityLabel
-        val p = getActivePlayer() ?: return
+        val service = PlaybackService.instance ?: return
+        val p = service.player ?: return
         val pos = p.currentPosition
+        val curVideo = _currentVideo.value
+        val audioUrl = _streamInfo.value?.audioUrl
 
-        val item = MediaItem.Builder()
-            .setUri(format.url)
-            .setMimeType(if (format.mimeType.contains("mp4")) MimeTypes.VIDEO_MP4 else MimeTypes.VIDEO_WEBM)
+        val mediaMetadata = MediaMetadata.Builder()
+            .setTitle(curVideo?.title ?: "")
+            .setArtist(curVideo?.channelTitle ?: "")
             .build()
 
-        p.setMediaItem(item, pos)
-        p.prepare()
-        p.play()
+        service.playStream(
+            hlsUrl = null,
+            directVideoUrl = format.url,
+            audioUrl = if (format.isVideo) audioUrl else null,
+            videoMimeType = format.mimeType,
+            metadata = mediaMetadata,
+            playbackSpeed = _playbackSpeed.value,
+            initialPositionMs = pos
+        )
     }
 
     fun setPlaybackSpeed(speed: Float) {

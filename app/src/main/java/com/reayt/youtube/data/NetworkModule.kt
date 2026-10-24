@@ -11,6 +11,7 @@ object NetworkModule {
     const val ADGUARD_DOH_URL = "https://dns.adguard-dns.com/dns-query"
     const val UA_WEB = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0"
     const val UA_IOS = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)"
+    const val UA_VISIONOS = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15"
 
     private val bootstrapClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)

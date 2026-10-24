@@ -257,7 +257,7 @@ fun YouTubeWatchScreen(
                                     )
                                 }
 
-                                Divider(
+                                VerticalDivider(
                                     modifier = Modifier
                                         .height(18.dp)
                                         .width(1.dp),
@@ -380,7 +380,7 @@ fun YouTubeWatchScreen(
 
             // Divider
             item {
-                Divider(color = Color(0xFF272727), thickness = 1.dp)
+                HorizontalDivider(color = Color(0xFF272727), thickness = 1.dp)
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
