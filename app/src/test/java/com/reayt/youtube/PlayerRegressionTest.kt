@@ -16,7 +16,7 @@ class PlayerRegressionTest {
     @Test
     fun testPlayerCommandFlowOutsideComposition() = runTest {
         // Verify that PlayerCommand can be emitted and collected safely outside Compose MonotonicFrameClock
-        val commandFlow = MutableSharedFlow<PlayerCommand>(extraBufferCapacity = 16)
+        val commandFlow = MutableSharedFlow<PlayerCommand>(replay = 16, extraBufferCapacity = 16)
         val publicFlow = commandFlow.asSharedFlow()
 
         val emitted = mutableListOf<PlayerCommand>()

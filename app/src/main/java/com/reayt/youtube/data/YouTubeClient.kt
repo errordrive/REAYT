@@ -775,9 +775,6 @@ object YouTubeClient {
     }
 
     private fun isShortsItem(obj: JSONObject): Boolean {
-        if (obj.has("reelShelfRenderer") || obj.has("reelItemRenderer") || obj.has("shortsLockupViewModel")) {
-            return true
-        }
         val nav = obj.optJSONObject("navigationEndpoint")
         if (nav != null && nav.has("reelWatchEndpoint")) {
             return true
@@ -957,6 +954,10 @@ object YouTubeClient {
                     }
 
                     for (k in node.keys()) {
+                        // Skip entire Shorts shelves, reels, and shorts lockup models
+                        if (k == "reelShelfRenderer" || k == "reelItemRenderer" || k == "shortsLockupViewModel") {
+                            continue
+                        }
                         extract(node.get(k))
                     }
                 }
