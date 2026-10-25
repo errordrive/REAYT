@@ -40,6 +40,9 @@ fun HomeScreen(
     onSearchClick: () -> Unit = {},
     onProfileClick: () -> Unit = {},
     onVideoClick: (YouTubeVideo) -> Unit = {},
+    onChannelClick: (String, String) -> Unit = { _, _ -> },
+    onDownload: (YouTubeVideo) -> Unit = {},
+    onSaveToWatchLater: (YouTubeVideo) -> Unit = {},
     viewModel: HomeViewModel = koinViewModel(),
     modifier: Modifier = Modifier
 ) {
@@ -144,7 +147,10 @@ fun HomeScreen(
                 ) { video ->
                     YouTubeVideoCard(
                         video = video,
-                        onClick = { onVideoClick(video) }
+                        onClick = { onVideoClick(video) },
+                        onDownload = { onDownload(video) },
+                        onSaveToWatchLater = { onSaveToWatchLater(video) },
+                        onChannelClick = { id, title -> onChannelClick(id, title) }
                     )
                 }
 

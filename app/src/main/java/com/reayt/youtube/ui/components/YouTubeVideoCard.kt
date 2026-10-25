@@ -1,5 +1,6 @@
 package com.reayt.youtube.ui.components
 
+import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -14,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -29,9 +31,11 @@ fun YouTubeVideoCard(
     video: YouTubeVideo,
     onClick: () -> Unit,
     onSaveToWatchLater: () -> Unit = {},
-    onChannelClick: (String) -> Unit = {},
+    onDownload: () -> Unit = {},
+    onChannelClick: (String, String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     var showBottomSheet by remember { mutableStateOf(false) }
 
     Column(
@@ -111,7 +115,7 @@ fun YouTubeVideoCard(
                     modifier = Modifier
                         .size(36.dp)
                         .clip(CircleShape)
-                        .clickable { onChannelClick(video.channelId) }
+                        .clickable { onChannelClick(video.channelId, video.channelTitle) }
                 )
             } else {
                 Box(
@@ -119,7 +123,7 @@ fun YouTubeVideoCard(
                         .size(36.dp)
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .clickable { onChannelClick(video.channelId) },
+                        .clickable { onChannelClick(video.channelId, video.channelTitle) },
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -203,8 +207,20 @@ fun YouTubeVideoCard(
                     }
                 )
                 ListItem(
+                    headlineContent = { Text("Download") },
+                    modifier = Modifier.clickable {
+                        onDownload()
+                        showBottomSheet = false
+                    }
+                )
+                ListItem(
                     headlineContent = { Text("Share") },
                     modifier = Modifier.clickable {
+                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, "https://www.youtube.com/watch?v=${video.id}")
+                        }
+                        context.startActivity(Intent.createChooser(shareIntent, "Share video"))
                         showBottomSheet = false
                     }
                 )

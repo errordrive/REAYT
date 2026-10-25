@@ -45,10 +45,32 @@ class PlayerRegressionTest {
             id = "test_abc",
             title = "Test Clean Title",
             channelTitle = "Test Channel",
-            thumbnailUrl = "https://example.com/thumb.jpg"
+            thumbnailUrl = "https://example.com/thumb.jpg",
+            likeCountText = "150K",
+            commentsContinuationToken = "token_comments_123"
         )
         assertEquals("test_abc", video.id)
         assertEquals("Test Clean Title", video.title)
         assertEquals("Test Channel", video.channelTitle)
+        assertEquals("150K", video.likeCountText)
+        assertEquals("token_comments_123", video.commentsContinuationToken)
+    }
+
+    @Test
+    fun testFullScreenEventsFlow() = runTest {
+        val fullScreenFlow = MutableSharedFlow<Boolean>(replay = 4, extraBufferCapacity = 4)
+        val emitted = mutableListOf<Boolean>()
+        val job = launch {
+            fullScreenFlow.collect { emitted.add(it) }
+        }
+
+        fullScreenFlow.tryEmit(true)
+        fullScreenFlow.tryEmit(false)
+        testScheduler.advanceUntilIdle()
+
+        assertEquals(2, emitted.size)
+        assertEquals(true, emitted[0])
+        assertEquals(false, emitted[1])
+        job.cancel()
     }
 }

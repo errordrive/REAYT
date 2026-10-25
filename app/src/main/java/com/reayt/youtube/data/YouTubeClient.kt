@@ -249,6 +249,37 @@ object YouTubeClient {
     }
 
     /**
+     * Fetches real channel video uploads by channel browseId.
+     */
+    suspend fun fetchChannelVideos(channelId: String): ResultState<YouTubePagedResult> =
+        withContext(Dispatchers.IO) {
+            if (channelId.isBlank()) return@withContext ResultState.ParseError("Missing channel ID")
+            try {
+                val body = JSONObject()
+                    .put("context", WEB_CLIENT_CONTEXT)
+                    .put("browseId", channelId)
+                    .put("params", "EgZ2aWRlb3PyBgQKAjoA") // videos tab param
+                val req = Request.Builder()
+                    .url("$YT_BASE/browse?prettyPrint=false")
+                    .post(body.toString().toRequestBody(JSON))
+                    .header("User-Agent", NetworkModule.UA_WEB)
+                    .header("Origin", ORIGIN_YT)
+                    .header("Referer", "$ORIGIN_YT/")
+                    .build()
+                NetworkModule.apiClient.newCall(req).await().use { resp ->
+                    if (!resp.isSuccessful) return@withContext ResultState.NetworkError("HTTP ${resp.code}")
+                    val json = JSONObject(resp.body?.string().orEmpty())
+                    val videos = parseVideoRenderers(json)
+                    ResultState.Success(YouTubePagedResult(videos, extractContinuationToken(json)))
+                }
+            } catch (e: IOException) {
+                ResultState.NetworkError(e.message ?: "Network error", e)
+            } catch (e: Throwable) {
+                ResultState.ParseError(e.message ?: "Parse error", e)
+            }
+        }
+
+    /**
      * Resolves direct video stream URLs with multi-client fallback chain:
      * 1. VisionOS InnerTube player client
      * 2. Android VR InnerTube player client
@@ -590,6 +621,41 @@ object YouTubeClient {
                     }
                 }
 
+                var commentsContinuationToken: String? = null
+                val panels = json.optJSONArray("engagementPanels")
+                if (panels != null) {
+                    for (i in 0 until panels.length()) {
+                        val p = panels.optJSONObject(i)?.optJSONObject("engagementPanelSectionListRenderer") ?: continue
+                        if (p.optString("panelIdentifier").contains("comment", ignoreCase = true)) {
+                            val secContents = p.optJSONObject("content")
+                                ?.optJSONObject("sectionListRenderer")
+                                ?.optJSONArray("contents")
+                            if (secContents != null) {
+                                for (j in 0 until secContents.length()) {
+                                    val isrContents = secContents.optJSONObject(j)
+                                        ?.optJSONObject("itemSectionRenderer")
+                                        ?.optJSONArray("contents")
+                                    if (isrContents != null) {
+                                        for (k in 0 until isrContents.length()) {
+                                            val tok = isrContents.optJSONObject(k)
+                                                ?.optJSONObject("continuationItemRenderer")
+                                                ?.optJSONObject("continuationEndpoint")
+                                                ?.optJSONObject("continuationCommand")
+                                                ?.optString("token")
+                                            if (!tok.isNullOrBlank()) {
+                                                commentsContinuationToken = tok
+                                                break
+                                            }
+                                        }
+                                    }
+                                    if (commentsContinuationToken != null) break
+                                }
+                            }
+                        }
+                        if (commentsContinuationToken != null) break
+                    }
+                }
+
                 val primaryVideo = YouTubeVideo(
                     id = videoId,
                     title = title,
@@ -602,6 +668,8 @@ object YouTubeClient {
                     description = description,
                     subscriberCount = subscriberCount,
                     likesCount = likesCount,
+                    likeCountText = likesCount,
+                    commentsContinuationToken = commentsContinuationToken,
                     isLive = isLive
                 )
 

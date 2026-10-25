@@ -44,6 +44,9 @@ import org.koin.androidx.compose.koinViewModel
 fun SearchScreen(
     onBack: () -> Unit = {},
     onVideoClick: (YouTubeVideo) -> Unit = {},
+    onChannelClick: (String, String) -> Unit = { _, _ -> },
+    onDownload: (YouTubeVideo) -> Unit = {},
+    onSaveToWatchLater: (YouTubeVideo) -> Unit = {},
     viewModel: SearchViewModel = koinViewModel(),
     modifier: Modifier = Modifier
 ) {
@@ -252,7 +255,10 @@ fun SearchScreen(
                 ) { video ->
                     YouTubeVideoCard(
                         video = video,
-                        onClick = { onVideoClick(video) }
+                        onClick = { onVideoClick(video) },
+                        onDownload = { onDownload(video) },
+                        onSaveToWatchLater = { onSaveToWatchLater(video) },
+                        onChannelClick = { id, title -> onChannelClick(id, title) }
                     )
                 }
 

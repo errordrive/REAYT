@@ -147,16 +147,14 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
-        // Validate caller package matches self
-        val callingPackage = controllerInfo.packageName
-        if (callingPackage == packageName) {
-            return mediaSession
-        }
-        // Allow system UI / Bluetooth controllers
-        if (callingPackage == "com.android.systemui" || controllerInfo.connectionHints.isEmpty) {
-            return mediaSession
-        }
-        return mediaSession
+        val pkg = controllerInfo.packageName
+        val trustedPackages = setOf(
+            packageName,
+            "com.android.systemui",
+            "com.google.android.bluetooth",
+            "com.android.bluetooth"
+        )
+        return if (pkg in trustedPackages || controllerInfo.isTrusted) mediaSession else null
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {

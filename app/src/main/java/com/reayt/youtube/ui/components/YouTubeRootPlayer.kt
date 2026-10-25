@@ -3,12 +3,14 @@ package com.reayt.youtube.ui.components
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -29,14 +31,17 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import com.reayt.youtube.model.YouTubeVideo
 import com.reayt.youtube.player.PlayerCommand
 import com.reayt.youtube.player.PlayerStateHolder
 import com.reayt.youtube.ui.theme.AppIcons
@@ -50,6 +55,7 @@ fun YouTubeRootPlayer(
     playerStateHolder: PlayerStateHolder,
     watchViewModel: WatchViewModel,
     bottomNavHeightDp: Int = 56,
+    onChannelClick: (String, String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val currentVideo by playerStateHolder.currentVideo.collectAsState()
@@ -58,6 +64,7 @@ fun YouTubeRootPlayer(
     val isLoadingStream by playerStateHolder.isLoadingStream.collectAsState()
     val positionMs by playerStateHolder.positionMs.collectAsState()
     val durationMs by playerStateHolder.durationMs.collectAsState()
+    val playbackSpeed by playerStateHolder.playbackSpeed.collectAsState()
     val streamError by playerStateHolder.streamError.collectAsState()
     val isFullScreen by playerStateHolder.isFullScreen.collectAsState()
     val relatedVideos by playerStateHolder.relatedVideos.collectAsState()
@@ -69,6 +76,7 @@ fun YouTubeRootPlayer(
     val isSubscribed by watchViewModel.isSubscribed.collectAsState()
 
     val video = currentVideo ?: return
+    val context = LocalContext.current
 
     val coroutineScope = rememberCoroutineScope()
     val configuration = LocalConfiguration.current
@@ -132,6 +140,7 @@ fun YouTubeRootPlayer(
     // Drag-to-minimise gesture tracker
     val velocityTracker = remember { VelocityTracker() }
     var horizontalMiniSwipeOffset by remember { mutableFloatStateOf(0f) }
+    var isExpandingFromMini by remember { mutableStateOf(false) }
 
     val playerOffsetPx = if (!isFullScreen) progress * maxDragDistancePx else 0f
     val currentVideoWidthPx = if (isFullScreen) screenWidthPx else screenWidthPx - progress * (screenWidthPx - miniThumbWidthPx)
@@ -144,7 +153,10 @@ fun YouTubeRootPlayer(
                 if (isFullScreen) return@pointerInput
 
                 detectDragGestures(
-                    onDragStart = { velocityTracker.resetTracking() },
+                    onDragStart = {
+                        velocityTracker.resetTracking()
+                        isExpandingFromMini = false
+                    },
                     onDragEnd = {
                         val velocityY = velocityTracker.calculateVelocity().y
                         val velocityX = velocityTracker.calculateVelocity().x
@@ -153,7 +165,13 @@ fun YouTubeRootPlayer(
                                 if (kotlin.math.abs(horizontalMiniSwipeOffset) > screenWidthPx * 0.35f || kotlin.math.abs(velocityX) > 1000f) {
                                     playerStateHolder.dismissPlayer()
                                 } else {
-                                    horizontalMiniSwipeOffset = 0f
+                                    // Rubber-band feel back to 0
+                                    Animatable(horizontalMiniSwipeOffset).animateTo(
+                                        0f,
+                                        spring(dampingRatio = 0.7f, stiffness = 380f)
+                                    ) {
+                                        horizontalMiniSwipeOffset = value
+                                    }
                                 }
                             } else {
                                 if (velocityY > 800f || progress > 0.35f) {
@@ -174,9 +192,11 @@ fun YouTubeRootPlayer(
                         change.consume()
                         velocityTracker.addPosition(change.uptimeMillis, change.position)
                         if (isMini) {
-                            if (dragAmount.y < -8f) {
+                            if (dragAmount.y < -8f && !isExpandingFromMini) {
+                                isExpandingFromMini = true
                                 coroutineScope.launch {
                                     playerStateHolder.miniPlayerProgress.animateTo(0f, spring(stiffness = 400f))
+                                    isExpandingFromMini = false
                                 }
                             } else {
                                 horizontalMiniSwipeOffset += dragAmount.x
@@ -212,14 +232,30 @@ fun YouTubeRootPlayer(
                         .width(with(density) { currentVideoWidthPx.toDp() })
                         .height(with(density) { currentVideoHeightPx.toDp() })
                         .background(Color.Black)
-                        .clickable {
-                            if (isMini) {
-                                coroutineScope.launch {
-                                    playerStateHolder.miniPlayerProgress.animateTo(0f, spring(stiffness = 400f))
+                        .pointerInput(isMini) {
+                            detectTapGestures(
+                                onDoubleTap = { offset ->
+                                    if (!isMini) {
+                                        val width = size.width
+                                        if (offset.x < width / 3f) {
+                                            playerStateHolder.seekRelative(-10000L)
+                                        } else if (offset.x > width * 2f / 3f) {
+                                            playerStateHolder.seekRelative(10000L)
+                                        } else {
+                                            showControls = !showControls
+                                        }
+                                    }
+                                },
+                                onTap = {
+                                    if (isMini) {
+                                        coroutineScope.launch {
+                                            playerStateHolder.miniPlayerProgress.animateTo(0f, spring(stiffness = 400f))
+                                        }
+                                    } else {
+                                        showControls = !showControls
+                                    }
                                 }
-                            } else {
-                                showControls = !showControls
-                            }
+                            )
                         }
                 ) {
                     // Media3 AndroidView Video Surface (Hosted once at root)
@@ -227,6 +263,7 @@ fun YouTubeRootPlayer(
                         factory = { ctx ->
                             PlayerView(ctx).apply {
                                 useController = false
+                                resizeMode = if (isFullScreen) AspectRatioFrameLayout.RESIZE_MODE_FILL else AspectRatioFrameLayout.RESIZE_MODE_FIT
                                 layoutParams = FrameLayout.LayoutParams(
                                     ViewGroup.LayoutParams.MATCH_PARENT,
                                     ViewGroup.LayoutParams.MATCH_PARENT
@@ -238,6 +275,7 @@ fun YouTubeRootPlayer(
                             if (playerView.player != mediaController) {
                                 playerView.player = mediaController
                             }
+                            playerView.resizeMode = if (isFullScreen) AspectRatioFrameLayout.RESIZE_MODE_FILL else AspectRatioFrameLayout.RESIZE_MODE_FIT
                         },
                         onRelease = { playerView ->
                             playerView.player = null
@@ -252,7 +290,7 @@ fun YouTubeRootPlayer(
                                 .fillMaxSize()
                                 .background(Color.Black.copy(alpha = 0.5f))
                         ) {
-                            // Top bar inside player: minimize, quality, audio mode, fullscreen
+                            // Top bar inside player: minimize, quality, speed, audio mode, download, fullscreen
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -273,6 +311,7 @@ fun YouTubeRootPlayer(
                                 }
 
                                 Row(verticalAlignment = Alignment.CenterVertically) {
+                                    // Quality Menu
                                     Box {
                                         IconButton(onClick = { showQualityMenu = true }) {
                                             Icon(
@@ -302,6 +341,30 @@ fun YouTubeRootPlayer(
                                         }
                                     }
 
+                                    // Playback Speed Cycling [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+                                    val speeds = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
+                                    TextButton(onClick = {
+                                        val currentIdx = speeds.indexOfFirst { kotlin.math.abs(it - playbackSpeed) < 0.05f }.let { if (it == -1) 2 else it }
+                                        val nextIdx = (currentIdx + 1) % speeds.size
+                                        playerStateHolder.setPlaybackSpeed(speeds[nextIdx])
+                                    }) {
+                                        val speedLabel = when {
+                                            kotlin.math.abs(playbackSpeed - 0.5f) < 0.05f -> "0.5×"
+                                            kotlin.math.abs(playbackSpeed - 0.75f) < 0.05f -> "0.75×"
+                                            kotlin.math.abs(playbackSpeed - 1.25f) < 0.05f -> "1.25×"
+                                            kotlin.math.abs(playbackSpeed - 1.5f) < 0.05f -> "1.5×"
+                                            kotlin.math.abs(playbackSpeed - 2.0f) < 0.05f -> "2×"
+                                            else -> "1×"
+                                        }
+                                        Text(
+                                            text = speedLabel,
+                                            color = Color.White,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+
+                                    // Audio Mode
                                     IconButton(onClick = { playerStateHolder.toggleAudioOnly() }) {
                                         Icon(
                                             imageVector = AppIcons.Headphones,
@@ -310,6 +373,16 @@ fun YouTubeRootPlayer(
                                         )
                                     }
 
+                                    // Download Button in Controls
+                                    IconButton(onClick = { watchViewModel.downloadCurrentVideo(context) }) {
+                                        Icon(
+                                            imageVector = AppIcons.Download,
+                                            contentDescription = "Download",
+                                            tint = Color.White
+                                        )
+                                    }
+
+                                    // Fullscreen Button
                                     IconButton(onClick = { playerStateHolder.toggleFullScreen() }) {
                                         Icon(
                                             imageVector = if (isFullScreen) AppIcons.FullscreenExit else AppIcons.Fullscreen,
@@ -473,6 +546,7 @@ fun YouTubeRootPlayer(
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
+                                        .clickable { onChannelClick(video.channelId, video.channelTitle) }
                                         .padding(horizontal = 14.dp, vertical = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
@@ -537,7 +611,7 @@ fun YouTubeRootPlayer(
                                 }
                             }
 
-                            // Action Buttons: Like, Save to Watch Later
+                            // Action Buttons: Like with like count, Save to Watch Later, Download
                             item {
                                 Row(
                                     modifier = Modifier
@@ -545,6 +619,7 @@ fun YouTubeRootPlayer(
                                         .padding(horizontal = 14.dp, vertical = 8.dp),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
+                                    // Like Button with like count
                                     Surface(
                                         shape = RoundedCornerShape(18.dp),
                                         color = MaterialTheme.colorScheme.surfaceVariant,
@@ -561,14 +636,24 @@ fun YouTubeRootPlayer(
                                                 modifier = Modifier.size(18.dp)
                                             )
                                             Spacer(modifier = Modifier.width(6.dp))
+                                            val displayLikeCount = if (video.likeCountText.isNotBlank()) {
+                                                video.likeCountText
+                                            } else if (video.likesCount.isNotBlank()) {
+                                                video.likesCount
+                                            } else if (isLiked) {
+                                                "Liked"
+                                            } else {
+                                                "Like"
+                                            }
                                             Text(
-                                                text = if (isLiked) "Liked" else "Like",
+                                                text = displayLikeCount,
                                                 fontSize = 13.sp,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                         }
                                     }
 
+                                    // Save to Watch Later
                                     Surface(
                                         shape = RoundedCornerShape(18.dp),
                                         color = MaterialTheme.colorScheme.surfaceVariant,
@@ -592,6 +677,108 @@ fun YouTubeRootPlayer(
                                             )
                                         }
                                     }
+
+                                    // Download Pill Button
+                                    Surface(
+                                        shape = RoundedCornerShape(18.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        modifier = Modifier.clickable { watchViewModel.downloadCurrentVideo(context) }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = AppIcons.Download,
+                                                contentDescription = "Download",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = "Download",
+                                                fontSize = 13.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Collapsible Description (FIX 9)
+                            item {
+                                val desc = video.description.trim()
+                                if (desc.isNotBlank()) {
+                                    var expanded by remember { mutableStateOf(false) }
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 14.dp, vertical = 6.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                                            .clickable { expanded = !expanded }
+                                            .padding(12.dp)
+                                    ) {
+                                        Text(
+                                            text = desc,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontSize = 13.sp,
+                                            lineHeight = 19.sp,
+                                            maxLines = if (expanded) Int.MAX_VALUE else 3,
+                                            overflow = if (expanded) TextOverflow.Clip else TextOverflow.Ellipsis
+                                        )
+                                        Spacer(Modifier.height(6.dp))
+                                        Text(
+                                            text = if (expanded) "Show less" else "Show more",
+                                            color = MaterialTheme.colorScheme.onBackground,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Comments Section Button & Sheet (FIX 11)
+                            item {
+                                var showComments by remember { mutableStateOf(false) }
+                                Surface(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 4.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable {
+                                            val token = video.commentsContinuationToken
+                                            if (!token.isNullOrBlank()) {
+                                                watchViewModel.loadComments(token)
+                                            }
+                                            showComments = true
+                                        },
+                                    color = MaterialTheme.colorScheme.surfaceVariant
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            AppIcons.Comment,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            "Comments",
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.onBackground
+                                        )
+                                    }
+                                }
+                                if (showComments) {
+                                    YouTubeCommentsSheet(
+                                        watchViewModel = watchViewModel,
+                                        onDismiss = { showComments = false }
+                                    )
                                 }
                             }
 
@@ -599,7 +786,10 @@ fun YouTubeRootPlayer(
                             items(relatedVideos, key = { it.id }) { rel ->
                                 YouTubeVideoCard(
                                     video = rel,
-                                    onClick = { playerStateHolder.playVideo(rel) }
+                                    onClick = { playerStateHolder.playVideo(rel) },
+                                    onDownload = { watchViewModel.downloadVideo(context, rel) },
+                                    onSaveToWatchLater = { watchViewModel.saveToWatchLater(rel, context) },
+                                    onChannelClick = { id, title -> onChannelClick(id, title) }
                                 )
                             }
                         }
@@ -622,15 +812,15 @@ fun YouTubeRootPlayer(
                             }
                         }
                 ) {
-                    // Top Progress Red Line
+                    // Miniplayer Progress Bar (FIX 10 - Bottom Alignment, 2dp height)
                     if (durationMs > 0) {
-                        val progressFraction = (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+                        val fraction = (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
                         Box(
                             modifier = Modifier
-                                .fillMaxWidth(progressFraction)
+                                .fillMaxWidth(fraction)
                                 .height(2.dp)
+                                .align(Alignment.BottomStart)
                                 .background(YouTubeRed)
-                                .align(Alignment.TopStart)
                         )
                     }
 

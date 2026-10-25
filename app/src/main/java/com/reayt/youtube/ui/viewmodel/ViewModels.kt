@@ -8,6 +8,8 @@ import com.reayt.youtube.data.YouTubeRepository
 import com.reayt.youtube.model.*
 import com.reayt.youtube.player.PlayerStateHolder
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -194,6 +196,67 @@ class WatchViewModel(
             _commentsLoading.value = false
         }
     }
+
+    fun downloadCurrentVideo(context: android.content.Context) {
+        val info = streamInfo.value ?: return
+        val video = currentVideo.value ?: return
+        val url = info.directVideoUrl ?: info.hlsUrl ?: return
+        val safeTitle = video.title.replace(Regex("[^a-zA-Z0-9_\\- ]"), "").take(60)
+        val request = android.app.DownloadManager.Request(android.net.Uri.parse(url))
+            .setTitle(video.title)
+            .setDescription("Downloading video…")
+            .setNotificationVisibility(
+                android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
+            )
+            .setDestinationInExternalPublicDir(
+                android.os.Environment.DIRECTORY_MOVIES,
+                "$safeTitle-${video.id}.mp4"
+            )
+            .setAllowedOverMetered(true)
+            .setAllowedOverRoaming(true)
+        val dm = context.getSystemService(android.content.Context.DOWNLOAD_SERVICE)
+            as android.app.DownloadManager
+        dm.enqueue(request)
+        android.widget.Toast.makeText(context, "Download started", android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    fun downloadVideo(context: android.content.Context, video: YouTubeVideo) {
+        viewModelScope.launch {
+            val res = YouTubeClient.resolveVideoStream(video.id)
+            if (res is ResultState.Success) {
+                val info = res.data
+                val url = info.directVideoUrl ?: info.hlsUrl ?: return@launch
+                val safeTitle = video.title.replace(Regex("[^a-zA-Z0-9_\\- ]"), "").take(60)
+                val request = android.app.DownloadManager.Request(android.net.Uri.parse(url))
+                    .setTitle(video.title)
+                    .setDescription("Downloading video…")
+                    .setNotificationVisibility(
+                        android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
+                    )
+                    .setDestinationInExternalPublicDir(
+                        android.os.Environment.DIRECTORY_MOVIES,
+                        "$safeTitle-${video.id}.mp4"
+                    )
+                    .setAllowedOverMetered(true)
+                    .setAllowedOverRoaming(true)
+                val dm = context.getSystemService(android.content.Context.DOWNLOAD_SERVICE)
+                    as android.app.DownloadManager
+                dm.enqueue(request)
+                android.widget.Toast.makeText(context, "Download started", android.widget.Toast.LENGTH_SHORT).show()
+            } else {
+                android.widget.Toast.makeText(context, "Could not start download", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    fun saveToWatchLater(video: YouTubeVideo, context: android.content.Context? = null) {
+        viewModelScope.launch {
+            userDataRepository.toggleWatchLater(video, true)
+            if (context != null) {
+                android.widget.Toast.makeText(context, "Saved to Watch Later", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 }
 
 class SubscriptionsViewModel(
@@ -213,9 +276,28 @@ class SubscriptionsViewModel(
         viewModelScope.launch {
             subscriptions.collectLatest { channels ->
                 if (channels.isNotEmpty()) {
-                    loadChannelUploads(channels.first().title)
+                    loadSubscriptionFeed()
                 }
             }
+        }
+    }
+
+    fun loadSubscriptionFeed() {
+        _isLoading.value = true
+        viewModelScope.launch {
+            val channels = subscriptions.value
+            if (channels.isEmpty()) { _isLoading.value = false; return@launch }
+            val allVideos = mutableListOf<YouTubeVideo>()
+            // Fetch first 3 channels in parallel, merge and sort by recency
+            channels.take(3).map { channel ->
+                async {
+                    val res = YouTubeClient.fetchChannelVideos(channel.id)
+                    if (res is ResultState.Success) res.data.videos else emptyList()
+                }
+            }.awaitAll().forEach { allVideos.addAll(it) }
+            // Deduplicate and sort (publishedTimeText is text-based; sort by list order as proxy)
+            _feedVideos.value = allVideos.distinctBy { it.id }
+            _isLoading.value = false
         }
     }
 

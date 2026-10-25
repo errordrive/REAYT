@@ -41,7 +41,9 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicLong
 
 sealed interface PlayerCommand {
     data object Expand : PlayerCommand
@@ -64,6 +66,7 @@ class PlayerStateHolder(private val context: Context) {
         }
     }
     private val scope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob() + exceptionHandler)
+    private val resolveGeneration = AtomicLong(0)
 
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var pendingVideo: YouTubeVideo? = null
@@ -71,6 +74,9 @@ class PlayerStateHolder(private val context: Context) {
 
     private val _playerCommands = MutableSharedFlow<PlayerCommand>(extraBufferCapacity = 64)
     val playerCommands: SharedFlow<PlayerCommand> = _playerCommands.asSharedFlow()
+
+    private val _fullScreenEvents = MutableSharedFlow<Boolean>(extraBufferCapacity = 8)
+    val fullScreenEvents: SharedFlow<Boolean> = _fullScreenEvents.asSharedFlow()
 
     private val _mediaController = MutableStateFlow<Player?>(null)
     val mediaController: StateFlow<Player?> = _mediaController.asStateFlow()
@@ -176,9 +182,17 @@ class PlayerStateHolder(private val context: Context) {
                             _bufferedPositionMs.value = controller.bufferedPosition.coerceAtLeast(0L)
 
                             if (playbackState == Player.STATE_ENDED && _isAutoplayEnabled.value) {
-                                val nextVideo = _relatedVideos.value.firstOrNull()
-                                if (nextVideo != null && nextVideo.id != _currentVideo.value?.id) {
-                                    playVideo(nextVideo)
+                                scope.launch {
+                                    // Wait up to 5 seconds for related videos to load
+                                    var waited = 0
+                                    while (_relatedVideos.value.isEmpty() && waited < 10) {
+                                        delay(500)
+                                        waited++
+                                    }
+                                    val nextVideo = _relatedVideos.value.firstOrNull()
+                                    if (nextVideo != null && nextVideo.id != _currentVideo.value?.id) {
+                                        playVideo(nextVideo)
+                                    }
                                 }
                             }
                         }
@@ -215,6 +229,7 @@ class PlayerStateHolder(private val context: Context) {
      * Initiates playback for a selected video.
      */
     fun playVideo(video: YouTubeVideo, startPositionMs: Long = 0L) {
+        val gen = resolveGeneration.incrementAndGet()
         // Requirement: Clear relatedVideos at the start of playVideo
         _relatedVideos.value = emptyList()
         _currentVideo.value = video
@@ -241,8 +256,10 @@ class PlayerStateHolder(private val context: Context) {
                         if (detailsResult is ResultState.Success) {
                             val (enrichedVideo, related) = detailsResult.data
                             withContext(Dispatchers.Main) {
-                                _currentVideo.value = enrichedVideo
-                                _relatedVideos.value = related
+                                if (gen == resolveGeneration.get()) {
+                                    _currentVideo.value = enrichedVideo
+                                    _relatedVideos.value = related
+                                }
                             }
                         }
                     } catch (e: Exception) {
@@ -251,7 +268,7 @@ class PlayerStateHolder(private val context: Context) {
                     }
                 }
 
-                resolveAndStartStream(video, startPositionMs)
+                resolveAndStartStream(video, startPositionMs, gen)
                 detailsDeferred.join()
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
@@ -261,16 +278,17 @@ class PlayerStateHolder(private val context: Context) {
         }
     }
 
-    private suspend fun resolveAndStartStream(video: YouTubeVideo, startPositionMs: Long) {
+    private suspend fun resolveAndStartStream(video: YouTubeVideo, startPositionMs: Long, gen: Long) {
         val streamResult = YouTubeClient.resolveVideoStream(video.id)
         withContext(Dispatchers.Main) {
+            if (gen != resolveGeneration.get()) return@withContext
             when (streamResult) {
                 is ResultState.Success -> {
                     val info = streamResult.data
                     _streamInfo.value = info
                     _isLoadingStream.value = false
                     _streamError.value = null
-                    loadMediaItemIntoController(video, info, startPositionMs)
+                    loadMediaItemIntoController(video, info, startPositionMs, gen)
                 }
                 is ResultState.NetworkError -> {
                     _isLoadingStream.value = false
@@ -296,8 +314,11 @@ class PlayerStateHolder(private val context: Context) {
     private fun loadMediaItemIntoController(
         video: YouTubeVideo,
         info: YouTubeStreamInfo,
-        startPositionMs: Long
+        startPositionMs: Long,
+        gen: Long
     ) {
+        if (_currentVideo.value?.id != video.id || gen != resolveGeneration.get()) return
+
         val controller = _mediaController.value
         if (controller == null) {
             pendingVideo = video
@@ -358,9 +379,10 @@ class PlayerStateHolder(private val context: Context) {
             val current = _currentVideo.value ?: return
             val pos = _positionMs.value
             _isLoadingStream.value = true
+            val currentGen = resolveGeneration.get()
             scope.launch {
                 delay(800)
-                resolveAndStartStream(current, pos)
+                resolveAndStartStream(current, pos, currentGen)
             }
         } else {
             _isLoadingStream.value = false
@@ -402,21 +424,46 @@ class PlayerStateHolder(private val context: Context) {
 
     fun setQuality(quality: String) {
         _selectedQuality.value = quality
+        val info = _streamInfo.value ?: return
         val controller = _mediaController.value ?: return
-        // Use TrackSelectionParameters for HLS and adaptive formats
-        val builder = controller.trackSelectionParameters.buildUpon()
-        if (quality.contains("1080")) {
-            builder.setMaxVideoSize(1920, 1080)
-        } else if (quality.contains("720")) {
-            builder.setMaxVideoSize(1280, 720)
-        } else if (quality.contains("480")) {
-            builder.setMaxVideoSize(854, 480)
-        } else if (quality.contains("360")) {
-            builder.setMaxVideoSize(640, 360)
+        val video = _currentVideo.value ?: return
+        val savedPos = _positionMs.value
+
+        if (info.hlsUrl != null) {
+            // HLS: use track selection
+            val builder = controller.trackSelectionParameters.buildUpon()
+            when {
+                quality.contains("1080") -> builder.setMaxVideoSize(1920, 1080)
+                quality.contains("720")  -> builder.setMaxVideoSize(1280, 720)
+                quality.contains("480")  -> builder.setMaxVideoSize(854, 480)
+                quality.contains("360")  -> builder.setMaxVideoSize(640, 360)
+                else -> builder.clearVideoSizeConstraints()
+            }
+            controller.trackSelectionParameters = builder.build()
         } else {
-            builder.clearVideoSizeConstraints()
+            // Direct URL: pick specific format and reload
+            val targetHeight = quality.removeSuffix("p").toIntOrNull()
+            val videoFormat = if (targetHeight != null) {
+                info.formats.filter { it.isVideo && it.height == targetHeight }
+                    .maxByOrNull { it.bitrate }
+            } else {
+                info.formats.filter { it.isVideo }
+                    .maxByOrNull { it.height }
+            }
+            val audioFormat = info.formats.filter { !it.isVideo }
+                .maxByOrNull { it.bitrate }
+
+            if (videoFormat != null) {
+                val patchedInfo = info.copy(
+                    directVideoUrl = videoFormat.url,
+                    audioUrl = audioFormat?.url ?: info.audioUrl,
+                    hlsUrl = null
+                )
+                _streamInfo.value = patchedInfo
+                _isLoadingStream.value = true
+                loadMediaItemIntoController(video, patchedInfo, savedPos, resolveGeneration.get())
+            }
         }
-        controller.trackSelectionParameters = builder.build()
     }
 
     fun toggleAudioOnly() {
@@ -429,11 +476,14 @@ class PlayerStateHolder(private val context: Context) {
     }
 
     fun toggleFullScreen() {
-        _isFullScreen.value = !_isFullScreen.value
+        val target = !_isFullScreen.value
+        _isFullScreen.value = target
+        _fullScreenEvents.tryEmit(target)
     }
 
     fun setFullScreen(fullScreen: Boolean) {
         _isFullScreen.value = fullScreen
+        _fullScreenEvents.tryEmit(fullScreen)
     }
 
     fun updateIsInPictureInPicture(inPiP: Boolean) {
@@ -456,5 +506,6 @@ class PlayerStateHolder(private val context: Context) {
         resolveJob?.cancel()
         controllerFuture?.let { MediaController.releaseFuture(it) }
         _mediaController.value = null
+        scope.cancel()
     }
 }

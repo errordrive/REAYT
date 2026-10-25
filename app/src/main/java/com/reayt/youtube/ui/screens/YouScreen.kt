@@ -35,6 +35,9 @@ fun YouScreen(
     onSearchClick: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
     onVideoClick: (YouTubeVideo) -> Unit = {},
+    onChannelClick: (String, String) -> Unit = { _, _ -> },
+    onDownload: (YouTubeVideo) -> Unit = {},
+    onSaveToWatchLater: (YouTubeVideo) -> Unit = {},
     viewModel: YouViewModel = koinViewModel(),
     modifier: Modifier = Modifier
 ) {
@@ -256,6 +259,12 @@ fun YouScreen(
                                 onClick = {
                                     activeSheetTitle = null
                                     onVideoClick(vid)
+                                },
+                                onDownload = { onDownload(vid) },
+                                onSaveToWatchLater = { onSaveToWatchLater(vid) },
+                                onChannelClick = { id, title ->
+                                    activeSheetTitle = null
+                                    onChannelClick(id, title)
                                 }
                             )
                         }

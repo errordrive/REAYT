@@ -30,6 +30,9 @@ fun SubscriptionsScreen(
     onSearchClick: () -> Unit = {},
     onProfileClick: () -> Unit = {},
     onVideoClick: (YouTubeVideo) -> Unit = {},
+    onChannelClick: (String, String) -> Unit = { _, _ -> },
+    onDownload: (YouTubeVideo) -> Unit = {},
+    onSaveToWatchLater: (YouTubeVideo) -> Unit = {},
     viewModel: SubscriptionsViewModel = koinViewModel(),
     modifier: Modifier = Modifier
 ) {
@@ -59,7 +62,7 @@ fun SubscriptionsScreen(
                 subscriptions.forEach { ch ->
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.clickable { viewModel.loadChannelUploads(ch.title) }
+                        modifier = Modifier.clickable { onChannelClick(ch.id, ch.title) }
                     ) {
                         if (ch.avatarUrl.isNotBlank()) {
                             AsyncImage(
@@ -142,7 +145,10 @@ fun SubscriptionsScreen(
                 items(feedVideos, key = { it.id }) { video ->
                     YouTubeVideoCard(
                         video = video,
-                        onClick = { onVideoClick(video) }
+                        onClick = { onVideoClick(video) },
+                        onDownload = { onDownload(video) },
+                        onSaveToWatchLater = { onSaveToWatchLater(video) },
+                        onChannelClick = { id, title -> onChannelClick(id, title) }
                     )
                 }
             }

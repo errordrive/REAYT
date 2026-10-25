@@ -116,3 +116,53 @@ Transformed the application from an initial prototype with static singletons, mi
   - Verifies continuation token extraction.
 - **`YouTubeRepositoryTest.kt`**:
   - Verifies ID deduplication logic during feed pagination.
+
+---
+
+## 10. Phase 7: Fullscreen Landscape, Downloads, Channels & UI Polish (Fixes 1–16)
+- **FIX 1 — Fullscreen: Forced Landscape Rotation & Immersive Bars**:
+  - Added `fullScreenEvents` `SharedFlow<Boolean>` in `PlayerStateHolder`.
+  - In `MainActivity.onCreate`, collected `fullScreenEvents` to toggle `ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE` and hide system bars using `WindowInsetsControllerCompat`.
+  - Configured `PlayerView.resizeMode` to `RESIZE_MODE_FILL` when fullscreen and `RESIZE_MODE_FIT` when restored.
+- **FIX 2 — Bottom Nav Visibility**:
+  - Wrapped `YouTubeRootPlayer` in a `Box` with `Modifier.padding(bottom = if (currentVideo != null && !isFullScreen) 56.dp else 0.dp)`.
+  - Miniplayer docks flush above bottom nav, keeping bottom nav permanently visible and interactive.
+- **FIX 3 — Non-HLS / Direct URL Quality Selector**:
+  - Re-implemented `setQuality()` to filter progressive formats by height and bitrate, reloading the player with the chosen stream format while maintaining playback position.
+- **FIX 4 — Race Condition Prevention (`resolveGeneration`)**:
+  - Guarded asynchronous stream resolution with `AtomicLong(resolveGeneration)` to drop stale in-flight responses.
+- **FIX 5 — Miniplayer Gesture Polish**:
+  - Guarded upward expansion with `isExpandingFromMini` to eliminate per-frame animation restarts.
+  - Implemented rubber-band spring recovery on cancelled horizontal dismissal.
+- **FIX 6 — Native Download System**:
+  - Added `WRITE_EXTERNAL_STORAGE` permission (API <= 28) in `AndroidManifest.xml`.
+  - Added `downloadCurrentVideo()` and `downloadVideo()` via system `DownloadManager`.
+  - Wired download actions into `YouTubeRootPlayer`, `YouTubeVideoCard`, and all screens.
+- **FIX 7 — Real Share Intent**:
+  - Replaced dummy share click with `Intent(Intent.ACTION_SEND)` passing the real video URL.
+- **FIX 8 — Channel Screen & Navigation**:
+  - Implemented `YouTubeClient.fetchChannelVideos()` fetching browseId channel uploads.
+  - Created `ChannelScreen.kt` with horizontal slide transition.
+  - Wired channel avatar and title taps from all screens and player.
+- **FIX 9 — Collapsible Description in Watch Screen**:
+  - Added collapsible description card with "Show more" / "Show less" toggle.
+- **FIX 10 — Miniplayer Progress Bar Positioning**:
+  - Repositioned miniplayer progress bar to `Alignment.BottomStart` with 2dp height.
+- **FIX 11 — Real Comments Sheet**:
+  - Extracted `commentsContinuationToken` in `YouTubeClient.fetchNextAndDetails()`.
+  - Added comments button and `YouTubeCommentsSheet` invocation in watch screen.
+- **FIX 12 — Watch Later Context Menu Wiring**:
+  - Connected `onSaveToWatchLater` from `YouTubeVideoCard` across Home, Search, Subscriptions, and You.
+- **FIX 13 — Parallel Channel Uploads Subscription Feed**:
+  - Upgraded `SubscriptionsViewModel.loadSubscriptionFeed()` to fetch channel uploads in parallel using `async`/`awaitAll`.
+- **FIX 14 — Autoplay Up-Next Video Waiting Loop**:
+  - Autoplay waits up to 5 seconds for related videos to load before dispatching next video.
+- **FIX 15 — Scope Leak Prevention**:
+  - Added `scope.cancel()` in `PlayerStateHolder.release()`.
+- **FIX 16 — Tightened MediaSession Security**:
+  - Restricted `PlaybackService.onGetSession()` to self, system UI, and trusted controllers.
+- **Additional Polish**:
+  - Double-tap seek: Left third rewinds 10s, right third fast-forwards 10s.
+  - Controls playback speed cycling: [0.5×, 0.75×, 1×, 1.25×, 1.5×, 2×].
+  - Likes count label next to Like button.
+  - Dedicated "Save" and "Download" pill buttons in watch screen action row.
