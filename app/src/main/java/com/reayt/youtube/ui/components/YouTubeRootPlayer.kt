@@ -1,6 +1,13 @@
 package com.reayt.youtube.ui.components
 
+import android.app.Activity
+import android.app.PictureInPictureParams
+import android.content.Context
+import android.content.Intent
 import android.content.res.Configuration
+import android.media.AudioManager
+import android.os.Build
+import android.util.Rational
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
@@ -12,9 +19,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -26,6 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
@@ -37,6 +47,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.Player
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
@@ -71,12 +82,15 @@ fun YouTubeRootPlayer(
     val mediaController by playerStateHolder.mediaController.collectAsState()
     val availableQualities by playerStateHolder.availableQualities.collectAsState()
     val selectedQuality by playerStateHolder.selectedQuality.collectAsState()
+    val repeatMode by playerStateHolder.repeatMode.collectAsState()
     val isLiked by watchViewModel.isLiked.collectAsState()
     val isInWatchLater by watchViewModel.isInWatchLater.collectAsState()
     val isSubscribed by watchViewModel.isSubscribed.collectAsState()
 
     val video = currentVideo ?: return
     val context = LocalContext.current
+    val activity = context as? Activity
+    val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager }
 
     val coroutineScope = rememberCoroutineScope()
     val configuration = LocalConfiguration.current
@@ -102,12 +116,19 @@ fun YouTubeRootPlayer(
     var scrubPositionMs by remember { mutableLongStateOf(0L) }
     var showQualityMenu by remember { mutableStateOf(false) }
 
+    // Vanced Gesture Controls: Brightness & Volume HUD
+    var gestureHudText by remember { mutableStateOf<String?>(null) }
+    var gestureHudIcon by remember { mutableStateOf<ImageVector?>(null) }
+    var gestureHudProgress by remember { mutableFloatStateOf(0f) }
+    var isAdjustingBrightness by remember { mutableStateOf(false) }
+    var isAdjustingVolume by remember { mutableStateOf(false) }
+
     // Velocity tracker for drag gestures
     val velocityTracker = remember { VelocityTracker() }
     var horizontalMiniSwipeOffset by remember { mutableFloatStateOf(0f) }
     var isExpandingFromMini by remember { mutableStateOf(false) }
 
-    // When a new video is loaded, automatically expand the player
+    // Auto-expand on new video selection
     LaunchedEffect(currentVideo?.id) {
         if (currentVideo != null) {
             horizontalMiniSwipeOffset = 0f
@@ -133,7 +154,7 @@ fun YouTubeRootPlayer(
         }
     }
 
-    // Intercept back button: Fullscreen -> exit; Expanded -> minimize; Mini -> let system handle
+    // Back button handling
     BackHandler(enabled = currentVideo != null && (effectiveFullScreen || !isMini)) {
         when {
             effectiveFullScreen -> playerStateHolder.setFullScreen(false)
@@ -157,11 +178,22 @@ fun YouTubeRootPlayer(
     val currentVideoWidthPx = if (effectiveFullScreen) screenWidthPx else screenWidthPx - progress * (screenWidthPx - miniThumbWidthPx)
     val currentVideoHeightPx = if (effectiveFullScreen) screenHeightPx else expandedVideoHeightPx - progress * (expandedVideoHeightPx - miniBarHeightPx)
 
+    // Helper to enter PiP
+    val enterPiP = {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && activity != null) {
+            try {
+                val params = PictureInPictureParams.Builder()
+                    .setAspectRatio(Rational(16, 9))
+                    .build()
+                activity.enterPictureInPictureMode(params)
+            } catch (_: Exception) {}
+        }
+    }
+
     // Root Container
     Box(
         modifier = modifier
             .fillMaxSize()
-            // When expanded, allow vertical drag down on top area to minimize
             .then(
                 if (!isMini && !effectiveFullScreen) {
                     Modifier.pointerInput(Unit) {
@@ -197,7 +229,7 @@ fun YouTubeRootPlayer(
             )
     ) {
         // Translating Player Container:
-        // When in miniplayer mode, constraint height strictly to 56dp so nothing spills over the bottom bar!
+        // Height strictly 56dp in mini mode so nothing spills over the bottom nav bar!
         Box(
             modifier = (if (isMini) Modifier.fillMaxWidth().height(56.dp) else Modifier.fillMaxSize())
                 .graphicsLayer {
@@ -259,10 +291,19 @@ fun YouTubeRootPlayer(
                         .width(with(density) { currentVideoWidthPx.toDp() })
                         .height(with(density) { currentVideoHeightPx.toDp() })
                         .background(Color.Black)
-                        .pointerInput(isMini) {
-                            detectTapGestures(
-                                onDoubleTap = { offset ->
-                                    if (!isMini) {
+                        // Vanced Swipe Gestures: Brightness (Left), Volume (Right), Double Tap Seek
+                        .pointerInput(isMini, effectiveFullScreen) {
+                            if (isMini) {
+                                detectTapGestures(
+                                    onTap = {
+                                        coroutineScope.launch {
+                                            playerStateHolder.miniPlayerProgress.animateTo(0f, spring(stiffness = 400f))
+                                        }
+                                    }
+                                )
+                            } else {
+                                detectTapGestures(
+                                    onDoubleTap = { offset ->
                                         val width = size.width
                                         if (offset.x < width / 3f) {
                                             playerStateHolder.seekRelative(-10000L)
@@ -271,19 +312,66 @@ fun YouTubeRootPlayer(
                                         } else {
                                             showControls = !showControls
                                         }
-                                    }
-                                },
-                                onTap = {
-                                    if (isMini) {
-                                        coroutineScope.launch {
-                                            playerStateHolder.miniPlayerProgress.animateTo(0f, spring(stiffness = 400f))
-                                        }
-                                    } else {
+                                    },
+                                    onTap = {
                                         showControls = !showControls
                                     }
-                                }
-                            )
+                                )
+                            }
                         }
+                        .then(
+                            if (!isMini) {
+                                Modifier.pointerInput(Unit) {
+                                    detectDragGestures(
+                                        onDragStart = { offset ->
+                                            if (offset.x < currentVideoWidthPx / 2f) {
+                                                isAdjustingBrightness = true
+                                                isAdjustingVolume = false
+                                            } else {
+                                                isAdjustingVolume = true
+                                                isAdjustingBrightness = false
+                                            }
+                                        },
+                                        onDragEnd = {
+                                            isAdjustingBrightness = false
+                                            isAdjustingVolume = false
+                                            coroutineScope.launch {
+                                                delay(1500)
+                                                if (!isAdjustingBrightness && !isAdjustingVolume) {
+                                                    gestureHudText = null
+                                                }
+                                            }
+                                        },
+                                        onDrag = { change, dragAmount ->
+                                            change.consume()
+                                            val delta = -dragAmount.y / currentVideoHeightPx
+                                            if (isAdjustingBrightness && activity != null) {
+                                                val window = activity.window
+                                                val lp = window.attributes
+                                                val cur = if (lp.screenBrightness >= 0f) lp.screenBrightness else 0.5f
+                                                val newB = (cur + delta).coerceIn(0.01f, 1.0f)
+                                                lp.screenBrightness = newB
+                                                window.attributes = lp
+                                                gestureHudIcon = AppIcons.BrightnessHigh
+                                                gestureHudProgress = newB
+                                                gestureHudText = "Brightness ${(newB * 100).toInt()}%"
+                                            } else if (isAdjustingVolume && audioManager != null) {
+                                                val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                                                val curVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                                                val step = if (delta > 0.02f) 1 else if (delta < -0.02f) -1 else 0
+                                                if (step != 0) {
+                                                    val newVol = (curVol + step).coerceIn(0, maxVol)
+                                                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVol, 0)
+                                                    gestureHudIcon = AppIcons.VolumeUp
+                                                    gestureHudProgress = newVol.toFloat() / maxVol.toFloat()
+                                                    gestureHudText = "Volume ${(gestureHudProgress * 100).toInt()}%"
+                                                }
+                                            }
+                                        }
+                                    )
+                                }
+                            } else Modifier
+                        )
                 ) {
                     // Media3 AndroidView Video Surface (Never covered by mini background)
                     AndroidView(
@@ -310,6 +398,48 @@ fun YouTubeRootPlayer(
                         modifier = Modifier.fillMaxSize()
                     )
 
+                    // Vanced Signature Gesture HUD Overlay (Brightness & Volume Indicator)
+                    gestureHudText?.let { text ->
+                        Surface(
+                            shape = RoundedCornerShape(20.dp),
+                            color = Color.Black.copy(alpha = 0.8f),
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .padding(16.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                gestureHudIcon?.let { icon ->
+                                    Icon(
+                                        imageVector = icon,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(30.dp)
+                                    )
+                                    Spacer(Modifier.height(6.dp))
+                                }
+                                Text(
+                                    text = text,
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                LinearProgressIndicator(
+                                    progress = { gestureHudProgress },
+                                    modifier = Modifier
+                                        .width(96.dp)
+                                        .height(4.dp)
+                                        .clip(CircleShape),
+                                    color = YouTubeRed,
+                                    trackColor = Color.White.copy(alpha = 0.3f)
+                                )
+                            }
+                        }
+                    }
+
                     // Expanded Controls Overlay (Only visible when expanded)
                     if (showControls && !isMini) {
                         Box(
@@ -317,7 +447,7 @@ fun YouTubeRootPlayer(
                                 .fillMaxSize()
                                 .background(Color.Black.copy(alpha = 0.5f))
                         ) {
-                            // Top Bar Controls: Minimize, Playback Speed, Audio Only, Quality, Download
+                            // Top Bar Controls: Minimize, Repeat, Playback Speed, Audio Only, Quality, Popup, Download
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -339,6 +469,18 @@ fun YouTubeRootPlayer(
                                 }
 
                                 Row(verticalAlignment = Alignment.CenterVertically) {
+                                    // Repeat Mode Button
+                                    IconButton(onClick = { playerStateHolder.toggleRepeatMode() }) {
+                                        Icon(
+                                            imageVector = when (repeatMode) {
+                                                Player.REPEAT_MODE_ONE -> AppIcons.RepeatOne
+                                                else -> AppIcons.Repeat
+                                            },
+                                            contentDescription = "Repeat",
+                                            tint = if (repeatMode != Player.REPEAT_MODE_OFF) YouTubeRed else Color.White
+                                        )
+                                    }
+
                                     // Quality Selection Button
                                     Box {
                                         IconButton(onClick = { showQualityMenu = true }) {
@@ -406,6 +548,15 @@ fun YouTubeRootPlayer(
                                         )
                                     }
 
+                                    // Popup / PiP Button
+                                    IconButton(onClick = { enterPiP() }) {
+                                        Icon(
+                                            imageVector = AppIcons.PictureInPicture,
+                                            contentDescription = "Popup Player",
+                                            tint = Color.White
+                                        )
+                                    }
+
                                     // Download Button in Controls
                                     IconButton(onClick = { watchViewModel.downloadCurrentVideo(context) }) {
                                         Icon(
@@ -460,7 +611,7 @@ fun YouTubeRootPlayer(
                                 }
                             }
 
-                            // Bottom Seekbar & Position Text & Fullscreen button (Moved to Bottom)
+                            // Bottom Seekbar & Position Text & Fullscreen button
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -655,11 +806,12 @@ fun YouTubeRootPlayer(
                                 }
                             }
 
-                            // Action Buttons: Like, Save to Watch Later, Download (Comments removed per instruction)
+                            // Action Buttons: Like, Share, Download, Repeat, Popup, Save (Vanced Action Bar)
                             item {
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState())
                                         .padding(horizontal = 14.dp, vertical = 8.dp),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
@@ -698,28 +850,35 @@ fun YouTubeRootPlayer(
                                         }
                                     }
 
-                                    // Save / Watch Later Pill
+                                    // Share Pill
                                     Surface(
                                         shape = RoundedCornerShape(18.dp),
                                         color = MaterialTheme.colorScheme.surfaceVariant,
-                                        modifier = Modifier.clickable { watchViewModel.saveToWatchLater(video, context) }
+                                        modifier = Modifier.clickable {
+                                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                                type = "text/plain"
+                                                putExtra(Intent.EXTRA_SUBJECT, video.title)
+                                                putExtra(Intent.EXTRA_TEXT, "https://www.youtube.com/watch?v=${video.id}")
+                                            }
+                                            context.startActivity(Intent.createChooser(shareIntent, "Share video"))
+                                        }
                                     ) {
                                         Row(
                                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Icon(
-                                                imageVector = if (isInWatchLater) AppIcons.Check else AppIcons.Bookmark,
-                                                contentDescription = "Save",
-                                                tint = if (isInWatchLater) YouTubeRed else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                imageVector = AppIcons.Share,
+                                                contentDescription = "Share",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 modifier = Modifier.size(18.dp)
                                             )
                                             Spacer(modifier = Modifier.width(6.dp))
                                             Text(
-                                                text = if (isInWatchLater) "Saved" else "Save",
+                                                text = "Share",
                                                 fontSize = 13.sp,
                                                 fontWeight = FontWeight.Medium,
-                                                color = if (isInWatchLater) YouTubeRed else MaterialTheme.colorScheme.onSurfaceVariant
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                         }
                                     }
@@ -746,6 +905,91 @@ fun YouTubeRootPlayer(
                                                 fontSize = 13.sp,
                                                 fontWeight = FontWeight.Medium,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+
+                                    // Repeat Pill
+                                    Surface(
+                                        shape = RoundedCornerShape(18.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        modifier = Modifier.clickable { playerStateHolder.toggleRepeatMode() }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = when (repeatMode) {
+                                                    Player.REPEAT_MODE_ONE -> AppIcons.RepeatOne
+                                                    else -> AppIcons.Repeat
+                                                },
+                                                contentDescription = "Repeat",
+                                                tint = if (repeatMode != Player.REPEAT_MODE_OFF) YouTubeRed else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = when (repeatMode) {
+                                                    Player.REPEAT_MODE_ONE -> "Repeat 1"
+                                                    Player.REPEAT_MODE_ALL -> "Repeat All"
+                                                    else -> "Repeat"
+                                                },
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = if (repeatMode != Player.REPEAT_MODE_OFF) YouTubeRed else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+
+                                    // Popup / PiP Pill
+                                    Surface(
+                                        shape = RoundedCornerShape(18.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        modifier = Modifier.clickable { enterPiP() }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = AppIcons.PictureInPicture,
+                                                contentDescription = "Popup",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = "Popup",
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+
+                                    // Save / Watch Later Pill
+                                    Surface(
+                                        shape = RoundedCornerShape(18.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        modifier = Modifier.clickable { watchViewModel.saveToWatchLater(video, context) }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = if (isInWatchLater) AppIcons.Check else AppIcons.Bookmark,
+                                                contentDescription = "Save",
+                                                tint = if (isInWatchLater) YouTubeRed else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = if (isInWatchLater) "Saved" else "Save",
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = if (isInWatchLater) YouTubeRed else MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                         }
                                     }

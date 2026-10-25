@@ -197,3 +197,34 @@ Transformed the application from an initial prototype with static singletons, mi
   - Enforced `AspectRatioFrameLayout.RESIZE_MODE_FIT` in `PlayerView` across all orientations, eliminating video stretching/distortion on landscape screens.
 - **Complete Removal of Comments**:
   - Removed comments preview card, action buttons, and sheet triggers from `YouTubeRootPlayer` per user instruction.
+
+---
+
+## 10. Phase 5: Vanced Signature Features Implementation (Reverse Engineered from Vanced.apk)
+- **Vanced APK Reverse Engineering**:
+  - Inspected `/storage/emulated/0/ApkLab/REAYT/Vanced.apk` using `rea` (`decode-android-resources`) and multi-DEX structural analysis.
+  - Extracted architectural blueprints for gesture controls (`io.awesome.gagtube.player.gesture`), playqueue repeat states (`io.awesome.gagtube.player.playqueue`), and watch view actions (`io.awesome.gagtube.player.ui`).
+- **Swipe-to-Adjust Brightness & Volume Gestures**:
+  - Vertical swipe on the left half of the video surface adjusts screen brightness smoothly via `Window.attributes.screenBrightness`.
+  - Vertical swipe on the right half of the video surface adjusts system media volume via `AudioManager.setStreamVolume`.
+  - Double-tap on the left/right thirds continues to perform 10s seek rewind and fast-forward.
+- **Vanced Gesture HUD Overlay**:
+  - Added a center HUD overlay displaying high-contrast icons (☀️ for brightness, 🔊 for volume), percentage text (e.g. `85%`), and a smooth animated progress indicator.
+  - Automatically fades out 1.5 seconds after gesture release.
+- **Watch Screen Vanced Action Bar**:
+  - Added horizontal scrollable pill action bar below the video player with:
+    - **Like**: Interactive button with view/like count toggle.
+    - **Share**: Launches native Android share intent (`Intent.ACTION_SEND`) with video title and YouTube URL.
+    - **Download**: Enqueues system `DownloadManager` download with valid CDN headers and notification.
+    - **Repeat**: Toggles between Off, Repeat One, and Repeat All with dynamic icon and indicator badge.
+    - **Popup (PiP)**: Triggers native Android Picture-in-Picture mode (`enterPictureInPictureMode`).
+    - **Save**: Saves video to Watch Later in Room database.
+- **Player Top Controls Bar**:
+  - Integrated Repeat mode toggle button and PiP/Popup button into top player control row alongside Quality, Speed, Audio-Only, and Download.
+- **Repeat Modes Engine**:
+  - Supported `REPEAT_MODE_OFF`, `REPEAT_MODE_ONE`, and `REPEAT_MODE_ALL` in `PlayerStateHolder`.
+  - Seamlessly syncs with ExoPlayer's `Player.Listener.onRepeatModeChanged`.
+  - Immediately loops playback to position 0 when `STATE_ENDED` is triggered under `REPEAT_MODE_ONE`.
+  - Added Repeat Mode selection row to `SettingsScreen`.
+- **Autoplay Setting**:
+  - Fully wired `isAutoplayEnabled` toggle in `SettingsScreen` to `PlayerStateHolder.toggleAutoplay()`.

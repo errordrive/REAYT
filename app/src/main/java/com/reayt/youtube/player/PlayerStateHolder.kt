@@ -140,6 +140,9 @@ class PlayerStateHolder(private val context: Context) {
     private val _isInPictureInPicture = MutableStateFlow(false)
     val isInPictureInPicture: StateFlow<Boolean> = _isInPictureInPicture.asStateFlow()
 
+    private val _repeatMode = MutableStateFlow(Player.REPEAT_MODE_OFF)
+    val repeatMode: StateFlow<Int> = _repeatMode.asStateFlow()
+
     // 0f = fully expanded watch screen, 1f = mini player dock
     val miniPlayerProgress = Animatable(0f)
 
@@ -181,20 +184,31 @@ class PlayerStateHolder(private val context: Context) {
                             _positionMs.value = controller.currentPosition.coerceAtLeast(0L)
                             _bufferedPositionMs.value = controller.bufferedPosition.coerceAtLeast(0L)
 
-                            if (playbackState == Player.STATE_ENDED && _isAutoplayEnabled.value) {
-                                scope.launch {
-                                    // Wait up to 5 seconds for related videos to load
-                                    var waited = 0
-                                    while (_relatedVideos.value.isEmpty() && waited < 10) {
-                                        delay(500)
-                                        waited++
-                                    }
-                                    val nextVideo = _relatedVideos.value.firstOrNull()
-                                    if (nextVideo != null && nextVideo.id != _currentVideo.value?.id) {
-                                        playVideo(nextVideo)
+                            if (playbackState == Player.STATE_ENDED) {
+                                if (_repeatMode.value == Player.REPEAT_MODE_ONE) {
+                                    controller.seekTo(0)
+                                    controller.play()
+                                    return
+                                }
+                                if (_isAutoplayEnabled.value) {
+                                    scope.launch {
+                                        // Wait up to 5 seconds for related videos to load
+                                        var waited = 0
+                                        while (_relatedVideos.value.isEmpty() && waited < 10) {
+                                            delay(500)
+                                            waited++
+                                        }
+                                        val nextVideo = _relatedVideos.value.firstOrNull()
+                                        if (nextVideo != null && nextVideo.id != _currentVideo.value?.id) {
+                                            playVideo(nextVideo)
+                                        }
                                     }
                                 }
                             }
+                        }
+
+                        override fun onRepeatModeChanged(repeatMode: Int) {
+                            _repeatMode.value = repeatMode
                         }
 
                         override fun onPlayerError(error: PlaybackException) {
@@ -467,6 +481,24 @@ class PlayerStateHolder(private val context: Context) {
                 loadMediaItemIntoController(video, patchedInfo, savedPos, resolveGeneration.get())
             }
         }
+    }
+
+    fun toggleAutoplay() {
+        _isAutoplayEnabled.value = !_isAutoplayEnabled.value
+    }
+
+    fun setAutoplay(enabled: Boolean) {
+        _isAutoplayEnabled.value = enabled
+    }
+
+    fun toggleRepeatMode() {
+        val next = when (_repeatMode.value) {
+            Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ONE
+            Player.REPEAT_MODE_ONE -> Player.REPEAT_MODE_ALL
+            else -> Player.REPEAT_MODE_OFF
+        }
+        _repeatMode.value = next
+        _mediaController.value?.repeatMode = next
     }
 
     fun toggleAudioOnly() {

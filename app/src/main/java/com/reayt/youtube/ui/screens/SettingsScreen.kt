@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.media3.common.Player
 import com.reayt.youtube.player.PlayerStateHolder
 import com.reayt.youtube.ui.theme.AppIcons
 import com.reayt.youtube.ui.theme.YouTubeRed
@@ -34,6 +35,7 @@ fun SettingsScreen(
     val isAutoplay by playerStateHolder.isAutoplayEnabled.collectAsState()
     val isAudioOnly by playerStateHolder.isAudioOnly.collectAsState()
     val selectedQuality by playerStateHolder.selectedQuality.collectAsState()
+    val repeatMode by playerStateHolder.repeatMode.collectAsState()
 
     var showClearHistoryDialog by remember { mutableStateOf(false) }
     var showQualityDialog by remember { mutableStateOf(false) }
@@ -100,10 +102,29 @@ fun SettingsScreen(
                     trailingContent = {
                         Switch(
                             checked = isAutoplay,
-                            onCheckedChange = { /* toggle autoplay */ },
+                            onCheckedChange = { playerStateHolder.toggleAutoplay() },
                             colors = SwitchDefaults.colors(checkedThumbColor = YouTubeRed)
                         )
                     }
+                )
+            }
+
+            item {
+                val repeatModeText = when (repeatMode) {
+                    Player.REPEAT_MODE_ONE -> "Repeat Current Video"
+                    Player.REPEAT_MODE_ALL -> "Repeat Queue"
+                    else -> "Off"
+                }
+                ListItem(
+                    headlineContent = { Text("Repeat Mode") },
+                    supportingContent = { Text(repeatModeText) },
+                    leadingContent = {
+                        Icon(
+                            imageVector = if (repeatMode == Player.REPEAT_MODE_ONE) AppIcons.RepeatOne else AppIcons.Repeat,
+                            contentDescription = null
+                        )
+                    },
+                    modifier = Modifier.clickable { playerStateHolder.toggleRepeatMode() }
                 )
             }
 
