@@ -24,6 +24,22 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.reayt.youtube.model.YouTubeComment
 import com.reayt.youtube.ui.theme.YouTubeRed
+import com.reayt.youtube.ui.viewmodel.WatchViewModel
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun YouTubeCommentsSheet(
+    watchViewModel: WatchViewModel,
+    onDismiss: () -> Unit
+) {
+    val comments by watchViewModel.comments.collectAsState()
+    val isLoading by watchViewModel.commentsLoading.collectAsState()
+    YouTubeCommentsSheet(
+        comments = comments,
+        isLoading = isLoading,
+        onClose = onDismiss
+    )
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
