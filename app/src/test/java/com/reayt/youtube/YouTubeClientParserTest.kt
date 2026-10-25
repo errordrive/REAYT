@@ -276,4 +276,16 @@ class YouTubeClientParserTest {
         assertTrue(blockedErr is ResultState.Blocked)
         assertEquals("HTTP 429", blockedErr.message)
     }
+
+    @Test
+    fun testCleanDisplayString() {
+        val rawJson = """{"simpleText":"2.5M views"}"""
+        assertEquals("2.5M views", YouTubeClient.cleanDisplayString(rawJson))
+
+        val prefixed = """: "1.2M views""""
+        assertEquals("1.2M views", YouTubeClient.cleanDisplayString(prefixed))
+
+        val normal = "4.8K views"
+        assertEquals("4.8K views", YouTubeClient.cleanDisplayString(normal))
+    }
 }

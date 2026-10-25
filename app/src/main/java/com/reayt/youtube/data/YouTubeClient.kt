@@ -24,14 +24,20 @@ object YouTubeClient {
     @Volatile
     private var cachedVisitorData: String = "CgtPVFZBTzFFckR3TSjZxfHWBjIKCgJCRBIEGgAgHQ%3D%3D"
 
+    private val clientHl: String
+        get() = Locale.getDefault().language.ifBlank { "en" }
+
+    private val clientGl: String
+        get() = Locale.getDefault().country.ifBlank { "US" }
+
     private val WEB_CLIENT_CONTEXT: JSONObject
         get() = JSONObject().put(
             "client",
             JSONObject().apply {
                 put("clientName", "WEB")
                 put("clientVersion", "2.20241018.01.00")
-                put("hl", "en")
-                put("gl", "US")
+                put("hl", clientHl)
+                put("gl", clientGl)
             }
         )
 
@@ -45,8 +51,8 @@ object YouTubeClient {
                 put("deviceModel", "Quest 3")
                 put("osName", "Android")
                 put("osVersion", "12")
-                put("hl", "en")
-                put("gl", "US")
+                put("hl", clientHl)
+                put("gl", clientGl)
             }
         )
 
@@ -61,8 +67,8 @@ object YouTubeClient {
                 put("userAgent", NetworkModule.UA_VISIONOS)
                 put("osName", "visionOS")
                 put("osVersion", "26.5.23O471")
-                put("hl", "en")
-                put("gl", "US")
+                put("hl", clientHl)
+                put("gl", clientGl)
                 put("visitorData", cachedVisitorData)
             }
         )
@@ -143,9 +149,25 @@ object YouTubeClient {
         }
     }
 
+    fun getDynamicTrendingQuery(): String {
+        val gl = clientGl
+        val topics = listOf(
+            "trending in $gl",
+            "trending music official video",
+            "popular gaming videos",
+            "latest technology gadgets AI",
+            "popular podcasts full episode",
+            "breaking news today",
+            "documentary full movie",
+            "viral entertainment videos",
+            "top global songs"
+        )
+        return topics.random()
+    }
+
     /**
      * Fetches real YouTube Home feed using InnerTube /browse (browseId: FEwhat_to_watch)
-     * with automatic fallback to popular trending videos if unauthenticated guest feed is empty.
+     * with automatic fallback to dynamic trending topics based on country/interests if empty.
      */
     suspend fun fetchBrowseFeed(continuationToken: String? = null): ResultState<YouTubePagedResult> = withContext(Dispatchers.IO) {
         try {
@@ -169,17 +191,17 @@ object YouTubeClient {
                     return@withContext ResultState.Blocked("Too many requests from YouTube. Please try again in a few moments.")
                 }
                 if (!resp.isSuccessful) {
-                    return@withContext searchVideosPaged("viral videos full", continuationToken)
+                    return@withContext searchVideosPaged(getDynamicTrendingQuery(), continuationToken)
                 }
                 val raw = resp.body?.string().orEmpty()
                 if (raw.isBlank()) {
-                    return@withContext searchVideosPaged("viral videos full", continuationToken)
+                    return@withContext searchVideosPaged(getDynamicTrendingQuery(), continuationToken)
                 }
                 val json = JSONObject(raw)
                 val videos = parseVideoRenderers(json)
                 if (videos.isEmpty()) {
-                    // InnerTube FEwhat_to_watch returns 0 videos for guest sessions without watch history; fallback to high-yield feed
-                    return@withContext searchVideosPaged("viral videos full", continuationToken)
+                    // InnerTube FEwhat_to_watch returns 0 videos for guest sessions without watch history; fallback to dynamic trending
+                    return@withContext searchVideosPaged(getDynamicTrendingQuery(), continuationToken)
                 }
                 val nextToken = extractContinuationToken(json)
                 ResultState.Success(YouTubePagedResult(videos, nextToken))
@@ -188,7 +210,7 @@ object YouTubeClient {
             ResultState.NetworkError("Network connection failed. Please check your internet.", e)
         } catch (e: Throwable) {
             Log.e(TAG, "fetchBrowseFeed error: ${e.message}", e)
-            searchVideosPaged("viral videos full", continuationToken)
+            searchVideosPaged(getDynamicTrendingQuery(), continuationToken)
         }
     }
 
@@ -203,8 +225,8 @@ object YouTubeClient {
             searchVideosPaged("", continuationToken)
         } else {
             val query = when (category.lowercase(Locale.ROOT)) {
-                "all", "" -> "viral videos full"
-                "trending" -> "trending viral videos full"
+                "all", "" -> getDynamicTrendingQuery()
+                "trending" -> "trending in $clientGl"
                 "gaming" -> "gaming highlights walkthrough"
                 "music" -> "official music video songs"
                 "live" -> "live news stream"
@@ -594,14 +616,20 @@ object YouTubeClient {
                         if (c.has("videoPrimaryInfoRenderer")) {
                             val vpi = c.getJSONObject("videoPrimaryInfoRenderer")
                             title = joinRuns(vpi.optJSONObject("title"))
-                            viewCount = vpi.optJSONObject("viewCount")?.optJSONObject("videoViewCountRenderer")?.optString("shortViewCount")
-                                ?: joinRuns(vpi.optJSONObject("viewCount")?.optJSONObject("videoViewCountRenderer")?.optJSONObject("viewCount"))
-                            publishedTime = joinRuns(vpi.optJSONObject("dateText"))
+                            val vvcr = vpi.optJSONObject("viewCount")?.optJSONObject("videoViewCountRenderer")
+                            viewCount = cleanDisplayString(
+                                joinRuns(vvcr?.optJSONObject("shortViewCount"))
+                                    .ifBlank { joinRuns(vvcr?.optJSONObject("viewCount")) }
+                                    .ifBlank { vvcr?.optString("simpleText").orEmpty() }
+                            )
+                            publishedTime = cleanDisplayString(joinRuns(vpi.optJSONObject("dateText")))
 
                             val buttons = vpi.optJSONObject("topLevelButtons")?.optJSONObject("segmentedLikeDislikeButtonRenderer")
                             val likeBtn = buttons?.optJSONObject("likeButton")?.optJSONObject("toggleButtonRenderer")
-                            likesCount = likeBtn?.optJSONObject("defaultText")?.optString("simpleText")
-                                ?: joinRuns(likeBtn?.optJSONObject("defaultText"))
+                            likesCount = cleanDisplayString(
+                                likeBtn?.optJSONObject("defaultText")?.optString("simpleText").orEmpty()
+                                    .ifBlank { joinRuns(likeBtn?.optJSONObject("defaultText")) }
+                            )
                         }
                         if (c.has("videoSecondaryInfoRenderer")) {
                             val vsi = c.getJSONObject("videoSecondaryInfoRenderer")
@@ -828,6 +856,21 @@ object YouTubeClient {
 
     // ---------------------------------------------------------------- Helper Parsers
 
+    fun cleanDisplayString(raw: String): String {
+        if (raw.isBlank()) return ""
+        var s = raw.trim()
+        if (s.contains("\"simpleText\"") || s.contains("\"text\"") || s.contains("\"content\"")) {
+            val match = Regex("\"(?:simpleText|text|content)\"\\s*:\\s*\"([^\"]+)\"").find(s)
+            if (match != null) {
+                s = match.groupValues[1]
+            }
+        }
+        s = s.replace("{", "").replace("}", "").replace("\"", "")
+        if (s.startsWith(":")) s = s.substring(1).trim()
+        if (s.startsWith(">")) s = s.substring(1).trim()
+        return s.trim()
+    }
+
     private fun joinRuns(obj: JSONObject?): String {
         if (obj == null) return ""
         val runs = obj.optJSONArray("runs")
@@ -837,9 +880,15 @@ object YouTubeClient {
                 val r = runs.optJSONObject(i) ?: continue
                 sb.append(r.optString("text"))
             }
-            return sb.toString()
+            return cleanDisplayString(sb.toString())
         }
-        return obj.optString("simpleText", "")
+        val simple = obj.optString("simpleText", "")
+        if (simple.isNotBlank()) return cleanDisplayString(simple)
+        val text = obj.optString("text", "")
+        if (text.isNotBlank()) return cleanDisplayString(text)
+        val content = obj.optString("content", "")
+        if (content.isNotBlank()) return cleanDisplayString(content)
+        return ""
     }
 
     private fun isShortsItem(obj: JSONObject): Boolean {
@@ -933,12 +982,12 @@ object YouTubeClient {
 
         return YouTubeVideo(
             id = vid,
-            title = title,
-            channelTitle = channel,
+            title = cleanDisplayString(title),
+            channelTitle = cleanDisplayString(channel),
             thumbnailUrl = thumb,
-            durationText = duration,
-            viewCountText = views,
-            publishedTimeText = published
+            durationText = cleanDisplayString(duration),
+            viewCountText = cleanDisplayString(views),
+            publishedTimeText = cleanDisplayString(published)
         )
     }
 
@@ -956,14 +1005,20 @@ object YouTubeClient {
             ?.optJSONObject("navigationEndpoint")
             ?.optJSONObject("browseEndpoint")?.optString("browseId").orEmpty()
 
-        val views = vr.optJSONObject("viewCountText")?.optString("simpleText")
-            ?: vr.optJSONObject("shortViewCountText")?.optString("simpleText")
-            ?: joinRuns(vr.optJSONObject("viewCountText"))
+        val views = cleanDisplayString(
+            joinRuns(vr.optJSONObject("shortViewCountText"))
+                .ifBlank { joinRuns(vr.optJSONObject("viewCountText")) }
+                .ifBlank { vr.optJSONObject("viewCountText")?.optString("simpleText").orEmpty() }
+        )
 
-        val published = vr.optJSONObject("publishedTimeText")?.optString("simpleText")
-            ?: joinRuns(vr.optJSONObject("publishedTimeText"))
-        val duration = vr.optJSONObject("lengthText")?.optString("simpleText")
-            ?: joinRuns(vr.optJSONObject("lengthText"))
+        val published = cleanDisplayString(
+            joinRuns(vr.optJSONObject("publishedTimeText"))
+                .ifBlank { vr.optJSONObject("publishedTimeText")?.optString("simpleText").orEmpty() }
+        )
+        val duration = cleanDisplayString(
+            joinRuns(vr.optJSONObject("lengthText"))
+                .ifBlank { vr.optJSONObject("lengthText")?.optString("simpleText").orEmpty() }
+        )
 
         val thumbs = vr.optJSONObject("thumbnail")?.optJSONArray("thumbnails")
         val thumb = if (thumbs != null && thumbs.length() > 0) {

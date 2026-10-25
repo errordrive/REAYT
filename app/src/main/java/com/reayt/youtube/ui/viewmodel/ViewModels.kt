@@ -198,53 +198,88 @@ class WatchViewModel(
     }
 
     fun downloadCurrentVideo(context: android.content.Context) {
-        val info = streamInfo.value ?: return
-        val video = currentVideo.value ?: return
-        val url = info.directVideoUrl ?: info.hlsUrl ?: return
-        val safeTitle = video.title.replace(Regex("[^a-zA-Z0-9_\\- ]"), "").take(60)
-        val request = android.app.DownloadManager.Request(android.net.Uri.parse(url))
-            .setTitle(video.title)
-            .setDescription("Downloading video…")
-            .setNotificationVisibility(
-                android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
-            )
-            .setDestinationInExternalPublicDir(
-                android.os.Environment.DIRECTORY_MOVIES,
-                "$safeTitle-${video.id}.mp4"
-            )
-            .setAllowedOverMetered(true)
-            .setAllowedOverRoaming(true)
-        val dm = context.getSystemService(android.content.Context.DOWNLOAD_SERVICE)
-            as android.app.DownloadManager
-        dm.enqueue(request)
-        android.widget.Toast.makeText(context, "Download started", android.widget.Toast.LENGTH_SHORT).show()
+        val info = streamInfo.value
+        val video = currentVideo.value
+        if (info == null || video == null) {
+            android.widget.Toast.makeText(context, "Video not ready for download", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        val progressiveFormat = info.formats.firstOrNull { it.isVideo && !it.mimeType.contains("m3u8") && (it.itag == 18 || it.itag == 22 || it.itag == 37) }
+            ?: info.formats.firstOrNull { it.isVideo && !it.mimeType.contains("m3u8") && it.url.isNotBlank() }
+        val url = progressiveFormat?.url ?: info.directVideoUrl
+        if (url.isNullOrBlank() || url.contains(".m3u8")) {
+            android.widget.Toast.makeText(context, "Direct download not available for this stream", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        val safeTitle = video.title.replace(Regex("[^a-zA-Z0-9_\\- ]"), "").take(50).ifBlank { "video" }
+        try {
+            val request = android.app.DownloadManager.Request(android.net.Uri.parse(url))
+                .setTitle(video.title)
+                .setDescription("Downloading video…")
+                .setNotificationVisibility(
+                    android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
+                )
+                .setDestinationInExternalPublicDir(
+                    android.os.Environment.DIRECTORY_DOWNLOADS,
+                    "$safeTitle-${video.id}.mp4"
+                )
+                .setAllowedOverMetered(true)
+                .setAllowedOverRoaming(true)
+
+            val ua = info.userAgent.ifBlank { com.reayt.youtube.data.NetworkModule.UA_VISIONOS }
+            request.addRequestHeader("User-Agent", ua)
+            request.addRequestHeader("Origin", "https://www.youtube.com")
+            request.addRequestHeader("Referer", "https://www.youtube.com/")
+
+            val dm = context.getSystemService(android.content.Context.DOWNLOAD_SERVICE) as android.app.DownloadManager
+            dm.enqueue(request)
+            android.widget.Toast.makeText(context, "Download started — check notification shade", android.widget.Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            android.widget.Toast.makeText(context, "Download error: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+        }
     }
 
     fun downloadVideo(context: android.content.Context, video: YouTubeVideo) {
         viewModelScope.launch {
+            android.widget.Toast.makeText(context, "Preparing download for ${video.title.take(25)}…", android.widget.Toast.LENGTH_SHORT).show()
             val res = YouTubeClient.resolveVideoStream(video.id)
             if (res is ResultState.Success) {
                 val info = res.data
-                val url = info.directVideoUrl ?: info.hlsUrl ?: return@launch
-                val safeTitle = video.title.replace(Regex("[^a-zA-Z0-9_\\- ]"), "").take(60)
-                val request = android.app.DownloadManager.Request(android.net.Uri.parse(url))
-                    .setTitle(video.title)
-                    .setDescription("Downloading video…")
-                    .setNotificationVisibility(
-                        android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
-                    )
-                    .setDestinationInExternalPublicDir(
-                        android.os.Environment.DIRECTORY_MOVIES,
-                        "$safeTitle-${video.id}.mp4"
-                    )
-                    .setAllowedOverMetered(true)
-                    .setAllowedOverRoaming(true)
-                val dm = context.getSystemService(android.content.Context.DOWNLOAD_SERVICE)
-                    as android.app.DownloadManager
-                dm.enqueue(request)
-                android.widget.Toast.makeText(context, "Download started", android.widget.Toast.LENGTH_SHORT).show()
+                val progressiveFormat = info.formats.firstOrNull { it.isVideo && !it.mimeType.contains("m3u8") && (it.itag == 18 || it.itag == 22 || it.itag == 37) }
+                    ?: info.formats.firstOrNull { it.isVideo && !it.mimeType.contains("m3u8") && it.url.isNotBlank() }
+                val url = progressiveFormat?.url ?: info.directVideoUrl
+                if (url.isNullOrBlank() || url.contains(".m3u8")) {
+                    android.widget.Toast.makeText(context, "Direct download format unavailable", android.widget.Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+                val safeTitle = video.title.replace(Regex("[^a-zA-Z0-9_\\- ]"), "").take(50).ifBlank { "video" }
+                try {
+                    val request = android.app.DownloadManager.Request(android.net.Uri.parse(url))
+                        .setTitle(video.title)
+                        .setDescription("Downloading video…")
+                        .setNotificationVisibility(
+                            android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
+                        )
+                        .setDestinationInExternalPublicDir(
+                            android.os.Environment.DIRECTORY_DOWNLOADS,
+                            "$safeTitle-${video.id}.mp4"
+                        )
+                        .setAllowedOverMetered(true)
+                        .setAllowedOverRoaming(true)
+
+                    val ua = info.userAgent.ifBlank { com.reayt.youtube.data.NetworkModule.UA_VISIONOS }
+                    request.addRequestHeader("User-Agent", ua)
+                    request.addRequestHeader("Origin", "https://www.youtube.com")
+                    request.addRequestHeader("Referer", "https://www.youtube.com/")
+
+                    val dm = context.getSystemService(android.content.Context.DOWNLOAD_SERVICE) as android.app.DownloadManager
+                    dm.enqueue(request)
+                    android.widget.Toast.makeText(context, "Download started — check notification shade", android.widget.Toast.LENGTH_LONG).show()
+                } catch (e: Exception) {
+                    android.widget.Toast.makeText(context, "Download error: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                }
             } else {
-                android.widget.Toast.makeText(context, "Could not start download", android.widget.Toast.LENGTH_SHORT).show()
+                android.widget.Toast.makeText(context, "Could not resolve download stream", android.widget.Toast.LENGTH_SHORT).show()
             }
         }
     }

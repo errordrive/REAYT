@@ -46,6 +46,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Request runtime notification permission on Android 13+ (API 33+) for download and playback notifications
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1001)
+            }
+        }
+
         // Bind media controller without calling startForegroundService
         playerStateHolder.bindMediaController()
 
@@ -179,21 +186,15 @@ fun MainAppShell(
             }
         }
 
-        // FIX 2: Root Video Player Layer padded by bottom nav height (56dp) so bottom nav remains fully visible
+        // Root Video Player Layer (Takes full screen; bottom nav of 56dp is factored inside)
         if (currentVideo != null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(bottom = if (currentVideo != null && !isFullScreen) 56.dp else 0.dp)
-            ) {
-                YouTubeRootPlayer(
-                    playerStateHolder = playerStateHolder,
-                    watchViewModel = watchViewModel,
-                    bottomNavHeightDp = 0,
-                    onChannelClick = { id, title -> channelToOpen = Pair(id, title) },
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
+            YouTubeRootPlayer(
+                playerStateHolder = playerStateHolder,
+                watchViewModel = watchViewModel,
+                bottomNavHeightDp = 56,
+                onChannelClick = { id, title -> channelToOpen = Pair(id, title) },
+                modifier = Modifier.fillMaxSize()
+            )
         }
 
         // Full Screen Search Overlay with Touch Click-Through Blocking

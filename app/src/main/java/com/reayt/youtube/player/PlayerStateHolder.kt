@@ -72,7 +72,7 @@ class PlayerStateHolder(private val context: Context) {
     private var pendingVideo: YouTubeVideo? = null
     private var pendingStartPositionMs: Long = 0L
 
-    private val _playerCommands = MutableSharedFlow<PlayerCommand>(extraBufferCapacity = 64)
+    private val _playerCommands = MutableSharedFlow<PlayerCommand>(replay = 1, extraBufferCapacity = 64)
     val playerCommands: SharedFlow<PlayerCommand> = _playerCommands.asSharedFlow()
 
     private val _fullScreenEvents = MutableSharedFlow<Boolean>(extraBufferCapacity = 8)
@@ -237,7 +237,10 @@ class PlayerStateHolder(private val context: Context) {
         _isLoadingStream.value = true
         retryCount = 0
 
-        // Auto-expand player via event flow (MonotonicFrameClock safe)
+        // Auto-expand player immediately to main video player
+        scope.launch {
+            miniPlayerProgress.snapTo(0f)
+        }
         _playerCommands.tryEmit(PlayerCommand.Expand)
 
         if (_mediaController.value == null) {

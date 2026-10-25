@@ -153,15 +153,18 @@ fun YouTubeVideoCard(
 
                 Spacer(modifier = Modifier.height(3.dp))
 
+                val cleanChannel = com.reayt.youtube.data.YouTubeClient.cleanDisplayString(video.channelTitle)
+                val cleanViews = com.reayt.youtube.data.YouTubeClient.cleanDisplayString(video.viewCountText)
+                val cleanDate = com.reayt.youtube.data.YouTubeClient.cleanDisplayString(video.publishedTimeText)
                 val meta = buildString {
-                    append(video.channelTitle)
-                    if (video.viewCountText.isNotBlank()) {
+                    append(cleanChannel)
+                    if (cleanViews.isNotBlank()) {
                         append(" • ")
-                        append(video.viewCountText)
+                        append(cleanViews)
                     }
-                    if (video.publishedTimeText.isNotBlank()) {
+                    if (cleanDate.isNotBlank()) {
                         append(" • ")
-                        append(video.publishedTimeText)
+                        append(cleanDate)
                     }
                 }
 

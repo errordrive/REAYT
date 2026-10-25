@@ -166,3 +166,34 @@ Transformed the application from an initial prototype with static singletons, mi
   - Controls playback speed cycling: [0.5×, 0.75×, 1×, 1.25×, 1.5×, 2×].
   - Likes count label next to Like button.
   - Dedicated "Save" and "Download" pill buttons in watch screen action row.
+
+---
+
+## 9. Phase 4: Critical Miniplayer, Download & UI Bug Fixes
+- **Miniplayer Blank Video Surface Fix**:
+  - Root cause: `YouTubeRootPlayer` overlay previously drew an opaque `MaterialTheme.colorScheme.surface` background spanning the full width `0..screenWidth`, occluding the playing video surface on the left.
+  - Fixed by padding the surface background start by `miniThumbWidthPx` (`~99dp`). The playing video thumbnail is completely unobstructed and renders continuously.
+- **Bottom Navigation Bar Overlap & Touch Interception Fix**:
+  - Root cause: Outer Box previously applied bottom padding unconditionally, and the translating Column had `fillMaxSize()` with background, extending down and covering the bottom navigation bar. Also, root gesture detectors intercepted full-screen touches.
+  - Fixed by constraining the Translating Container height strictly to `56.dp` when in mini mode, applying mini drag/tap gestures ONLY to the 56dp mini bar, and passing `bottomNavHeightDp = 56`. The bottom nav bar and background feed remain 100% visible, touchable, and scrollable.
+- **Immediate Auto-Expansion on New Video Selection**:
+  - Root cause: Selecting a video while in mini mode or after dismissal did not expand the player because `playerCommands` had `replay = 0` and `miniPlayerProgress` stayed at 1f.
+  - Fixed by setting `replay = 1` on `_playerCommands`, snapping `miniPlayerProgress` to `0f` immediately in `playVideo()`, and adding `LaunchedEffect(currentVideo?.id)` inside `YouTubeRootPlayer` to animate to expanded mode on every new video.
+- **Raw JSON String Leakage Fix**:
+  - Root cause: InnerTube `viewCount` object extraction previously read the JSONObject as a string, leaking `{"simpleText":"2.5M views"}`.
+  - Implemented `cleanDisplayString()` in `YouTubeClient.kt` and applied it across `YouTubeRootPlayer`, `YouTubeVideoCard`, and models. Strips all JSON brackets, quotes, and colons.
+- **Direct Download & Notification Progress Fix**:
+  - Injected YouTube CDN required headers (`User-Agent`, `Origin`, `Referer`) into `DownloadManager.Request`.
+  - Added direct MP4 format resolution (preventing broken HLS `.m3u8` download attempts).
+  - Target directory set to `Environment.DIRECTORY_DOWNLOADS`.
+  - Added Android 13+ (API 33+) runtime `POST_NOTIFICATIONS` permission prompt in `MainActivity`.
+- **Dynamic, Region & Interest-Based Dynamic Home Feed**:
+  - Configured InnerTube client contexts (`WEB`, `VISIONOS`, `ANDROID_VR`) with device `Locale.getDefault().language` (`hl`) and `Locale.getDefault().country` (`gl`).
+  - Upgraded `YouTubeRepository.refillFromSeeds()` and `YouTubeClient.fetchBrowseFeed()` to derive seeds from user's actual watch history and subscriptions.
+  - Falls back to dynamically rotating trending queries for the user's locale rather than static `"viral videos full"`.
+- **Fullscreen Button Relocated to Player Bottom**:
+  - Moved fullscreen button from the top player bar to the bottom right of the player controls row, adjacent to the seekbar and time elapsed/total indicators.
+- **Horizontal Player Aspect Ratio Preservation**:
+  - Enforced `AspectRatioFrameLayout.RESIZE_MODE_FIT` in `PlayerView` across all orientations, eliminating video stretching/distortion on landscape screens.
+- **Complete Removal of Comments**:
+  - Removed comments preview card, action buttons, and sheet triggers from `YouTubeRootPlayer` per user instruction.

@@ -100,8 +100,8 @@ class YouTubeRepository(
         val seeds = mutableListOf<String>()
 
         try {
-            val history = database.watchHistoryDao().getRecentHistorySync(5)
-            seeds.addAll(history.map { it.title }.filter { it.isNotBlank() })
+            val history = database.watchHistoryDao().getRecentHistorySync(10)
+            seeds.addAll(history.map { it.channelTitle.ifBlank { it.title } }.filter { it.isNotBlank() })
         } catch (_: Exception) {}
 
         try {
@@ -112,18 +112,18 @@ class YouTubeRepository(
         if (seeds.isEmpty()) {
             seeds.addAll(
                 listOf(
-                    "viral videos full",
-                    "trending music official video",
-                    "documentary full movie",
+                    YouTubeClient.getDynamicTrendingQuery(),
+                    "trending music videos",
+                    "popular science technology",
+                    "top gaming highlights",
+                    "documentary full episode",
                     "popular podcasts",
-                    "popular gaming walkthrough",
-                    "news live today",
-                    "popular tech reviews"
+                    "viral global trends"
                 )
             )
         }
 
-        val chosenSeed = seeds.shuffled().firstOrNull() ?: "viral videos full"
+        val chosenSeed = seeds.shuffled().firstOrNull() ?: YouTubeClient.getDynamicTrendingQuery()
         val searchRes = YouTubeClient.searchVideosPaged(chosenSeed)
         if (searchRes is ResultState.Success) {
             return searchRes.data.videos.filter { it.id !in seenIds }
