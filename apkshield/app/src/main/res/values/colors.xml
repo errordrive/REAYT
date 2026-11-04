@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="shield_bg">#0E140E</color>
+    <color name="shield_card">#161F16</color>
+    <color name="shield_green">#3DDC84</color>
+    <color name="shield_green_dim">#1B5E20</color>
+    <color name="shield_text">#E6F1E6</color>
+    <color name="shield_muted">#8FA08F</color>
+    <color name="shield_red">#FF6B6B</color>
+</resources>

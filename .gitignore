@@ -1,35 +1,22 @@
-# Built application and APK artifacts
+# Built artifacts
 *.apk
 *.aab
-*.zip
-my-apk.apk
-decompiled_src/
-tmp/
-*.log
-
-# Gradle build files
-.gradle/
 build/
-app/build/
+build_output/
 
-# IDE files
+# Gradle
+.gradle/
+local.properties
+
+# IDE
 .idea/
 *.iml
 .navigation/
 captures/
 .externalNativeBuild/
 .cxx/
-local.properties
 
-# Environment and sensitive files
-.env
-.env.*
-*.secret
-*.keystore
-*.jks
-
-# Scratch and outputs
-build_output/
-.agents/
-.gemini/
-decrypt_strings.py
+# Generated signing material
+apkshield/app/src/main/resources/apkshield.p12
+apkshield/app/src/main/assets/apkshield_runtime.dex
+apkshield/tools/runtime.dex

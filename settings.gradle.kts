@@ -21,3 +21,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "REAYT"
 include(":app")
+include(":apkshield")

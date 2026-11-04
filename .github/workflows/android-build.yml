@@ -1,4 +1,4 @@
-name: Android Cloud Build
+name: Build ApkShield APK
 
 on:
   push:
@@ -9,17 +9,17 @@ on:
 
 jobs:
   build:
-    name: Build Android APK
+    name: Build ApkShield APK
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up Java 21
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
+          java-version: '21'
           distribution: 'temurin'
 
       - name: Setup Gradle 8.7
@@ -27,15 +27,62 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      - name: Run Unit Tests
-        run: gradle testDebugUnitTest --stacktrace
+      - name: Assemble runtime DEX
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq smali
+          mkdir -p apkshield/app/src/main/assets
+          smali assemble apkshield/tools/runtime-smali -o apkshield/app/src/main/assets/apkshield_runtime.dex
+          ls -l apkshield/app/src/main/assets/apkshield_runtime.dex
 
-      - name: Build Debug APK
-        run: gradle assembleDebug --stacktrace
+      - name: Prepare signing keystore
+        run: |
+          mkdir -p apkshield/app/src/main/resources
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > apkshield/app/src/main/resources/apkshield.p12
+          else
+            keytool -genkeypair \
+              -keystore apkshield/app/src/main/resources/apkshield.p12 \
+              -storetype PKCS12 -storepass apkshield -keypass apkshield \
+              -alias apkshield -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=ApkShield"
+          fi
+          ls -l apkshield/app/src/main/resources/apkshield.p12
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+
+      - name: Build Release APK
+        run: |
+          mkdir -p build_output
+          gradle :apkshield:assembleRelease --stacktrace
+
+      - name: Zipalign and Sign APK with v1, v2, and v3 Schemes
+        env:
+          KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
+        run: |
+          BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
+          echo "Using Android Build Tools: $BT"
+          UNSIGNED=$(find apkshield/app/build/outputs/apk/release -name '*-unsigned.apk' | head -1)
+          if [ -z "$UNSIGNED" ]; then UNSIGNED=$(find apkshield/app/build/outputs/apk/release -name '*.apk' | head -1); fi
+          KS=apkshield/app/src/main/resources/apkshield.p12
+          OUT=build_output/ApkShield-v1.0-release.apk
+          "$BT/zipalign" -f -p 4 "$UNSIGNED" build_output/temp.apk
+          "$BT/apksigner" sign \
+            --ks "$KS" \
+            --ks-pass pass:"${KEYSTORE_PASS:-apkshield}" \
+            --key-pass pass:"${KEYSTORE_PASS:-apkshield}" \
+            --ks-key-alias apkshield \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --out "$OUT" \
+            build_output/temp.apk
+          "$BT/apksigner" verify --verbose "$OUT"
+          rm -f build_output/temp.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: reayt-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: apkshield-release-apk
+          path: build_output/ApkShield-v1.0-release.apk
           retention-days: 14
