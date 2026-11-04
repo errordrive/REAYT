@@ -54,7 +54,7 @@ jobs:
       - name: Build Release APK
         run: |
           mkdir -p build_output
-          gradle :apkshield:assembleRelease --stacktrace
+          gradle :apkshield:app:assembleRelease --stacktrace
 
       - name: Zipalign and Sign APK with v1, v2, and v3 Schemes
         env:
