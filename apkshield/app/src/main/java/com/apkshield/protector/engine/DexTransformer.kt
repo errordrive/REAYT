@@ -2,13 +2,13 @@ package com.apkshield.protector.engine
 
 import org.jf.dexlib2.Opcode
 import org.jf.dexlib2.Opcodes
-import org.jf.dexlib2.builder.MethodImplementationBuilder
-import org.jf.dexlib2.builder.MethodLocation
-import org.jf.dexlib2.builder.instruction.BuilderInstruction21c
 import org.jf.dexlib2.dexbacked.DexBackedDexFile
-import org.jf.dexlib2.iface.MethodImplementation
+import org.jf.dexlib2.iface.DexFile
 import org.jf.dexlib2.iface.instruction.ReferenceInstruction
+import org.jf.dexlib2.iface.instruction.formats.Instruction21c
 import org.jf.dexlib2.iface.reference.StringReference
+import org.jf.dexlib2.immutable.instruction.ImmutableInstruction21c
+import org.jf.dexlib2.immutable.reference.ImmutableStringReference
 import org.jf.dexlib2.rewriter.DexRewriter
 import org.jf.dexlib2.rewriter.Rewriter
 import org.jf.dexlib2.rewriter.RewriterModule
@@ -25,33 +25,25 @@ object DexTransformer {
     fun encryptStrings(dex: ByteArray, seed: Long): ByteArray {
         val dexFile = DexBackedDexFile.fromInputStream(Opcodes.getDefault(), dex.inputStream())
         val rewriter = DexRewriter(object : RewriterModule() {
-            override fun getMethodImplementationRewriter(rewriters: Rewriters): Rewriter<MethodImplementation> {
-                return Rewriter { impl ->
-                    if (impl == null) return@Rewriter null
-                    try {
-                        val builder = MethodImplementationBuilder(impl.registerCount)
-                        for (instruction in impl.instructions) {
-                            val loc: MethodLocation = builder.addInstruction(instruction)
-                            if (instruction is ReferenceInstruction &&
-                                instruction.opcode == Opcode.CONST_STRING &&
-                                instruction.reference is StringReference) {
-                                val literal = (instruction.reference as StringReference).string
-                                if (literal.isNotEmpty()) {
-                                    val encoded = encryptLiteral(literal, seed)
-                                    loc.replaceInstruction(
-                                        BuilderInstruction21c(Opcode.CONST_STRING, loc, StringRef(encoded))
-                                    )
-                                }
-                            }
-                        }
-                        builder.build()
-                    } catch (t: Throwable) {
-                        impl
-                    }
+            override fun getInstructionRewriter(rewriters: Rewriters): Rewriter<org.jf.dexlib2.iface.instruction.Instruction> {
+                return Rewriter { inst ->
+                    if (inst is Instruction21c &&
+                        inst.opcode == Opcode.CONST_STRING &&
+                        inst.reference is StringReference) {
+                        val literal = (inst.reference as StringReference).string
+                        if (literal.isNotEmpty()) {
+                            val encoded = encryptLiteral(literal, seed)
+                            ImmutableInstruction21c(
+                                Opcode.CONST_STRING,
+                                inst.registerA,
+                                ImmutableStringReference(encoded)
+                            )
+                        } else inst
+                    } else inst
                 }
             }
         })
-        val rewritten = rewriter.rewriteDexFile(dexFile)
+        val rewritten: DexFile = rewriter.getDexFileRewriter().rewrite(dexFile)
         val store = MemoryDataStore()
         DexPool.writeTo(store, rewritten)
         return store.data
@@ -69,11 +61,6 @@ object DexTransformer {
         return java.util.Base64.getEncoder().encodeToString(out)
     }
 
-    class StringRef(private val s: String) : StringReference {
-        override fun getString(): String = s
-        override fun getType(): Int = org.jf.dexlib2.ReferenceType.STRING
-    }
-
     fun renameIdentifiers(dex: ByteArray, seed: Long, protectedPrefixes: List<String>): ByteArray {
         val dexFile = DexBackedDexFile.fromInputStream(Opcodes.getDefault(), dex.inputStream())
         val mapping = HashMap<String, String>()
@@ -89,7 +76,7 @@ object DexTransformer {
                 return Rewriter { t -> mapping[t] ?: t }
             }
         })
-        val rewritten = rewriter.rewriteDexFile(dexFile)
+        val rewritten: DexFile = rewriter.getDexFileRewriter().rewrite(dexFile)
         val store = MemoryDataStore()
         DexPool.writeTo(store, rewritten)
         return store.data
